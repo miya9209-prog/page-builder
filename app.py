@@ -26,8 +26,6 @@ def build_prompt(data):
 
 사이즈 추천: {data['size_tip']}
 실측 사이즈: {data['size_detail']}
-
-미샵 스타일 기획 + HTML 생성
 """
 
 st.subheader("상품 정보 입력")
@@ -35,21 +33,22 @@ st.subheader("상품 정보 입력")
 col1, col2 = st.columns(2)
 
 with col1:
-    name = st.text_input("상품명")
-    material = st.text_input("소재")
-    fit = st.text_input("핏")
+    name = st.text_input("상품명", placeholder="예: 레이 슬리밍 티셔츠")
+    material = st.text_input("소재", placeholder="예: 면35% 폴리65%")
+    fit = st.text_input("핏", placeholder="예: 허리라인 강조 슬림핏")
 
 with col2:
-    color = st.text_input("컬러 옵션")
-    target = st.text_input("타겟")
+    color = st.text_input("컬러 옵션", placeholder="예: 블랙, 아이보리, 베이지")
+    target = st.text_input("타겟", value="4050 여성")
 
-features = st.text_area("핵심 특징")
-detail = st.text_area("디테일 특징")
-coordi = st.text_area("코디")
+features = st.text_area("핵심 특징", placeholder="예: 복부 커버, 허리 들뜸 방지, 신축성 우수")
+detail = st.text_area("디테일 특징", placeholder="예: 꼬임 디테일, 인밴딩, 라글란 소매")
+coordi = st.text_area("코디", placeholder="예: 슬랙스 / 데님 / 스커트")
 
 st.subheader("사이즈 정보")
-size_tip = st.text_area("사이즈 추천")
-size_detail = st.text_area("실측 사이즈")
+
+size_tip = st.text_area("사이즈 추천", placeholder="예: free사이즈로 77까지 추천드립니다.")
+size_detail = st.text_area("실측 사이즈", placeholder="예: 어깨60 / 가슴134 / 총장67")
 
 if st.button("생성하기"):
     data = {
@@ -80,6 +79,5 @@ if st.button("생성하기"):
     st.text_area("결과", result, height=900)
     st.download_button("다운로드", result, file_name="page_builder.txt")
 
-# 🔥 화면 최하단 카피라이트
 st.markdown("---")
 st.markdown("© made by MISHARP, MIYAWA")
