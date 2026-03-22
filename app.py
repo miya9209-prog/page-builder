@@ -7,6 +7,9 @@ from openai import OpenAI
 
 st.set_page_config(page_title="page-builder", layout="wide")
 
+if "reset_nonce" not in st.session_state:
+    st.session_state.reset_nonce = 0
+
 st.title("PAGE BUILDER")
 st.caption("미샵 상세페이지 기획 + 원고 생성기")
 
@@ -195,14 +198,18 @@ ChatGPT는 입력된 상품 정보를 기반으로
 OUTPUT_RULES = """
 최종 출력은 반드시 아래 순서와 제목을 그대로 지켜 하나의 텍스트 문서로 작성합니다.
 
-1. 기본 사양
+-------------------------
+기본사양
+-------------------------
 
 상품명 : 상품명 (컬러)
 사이즈 :
 소재 :
 디테일 팁 :
 
-2. 원고 양식
+-------------------------
+원고 양식
+-------------------------
 
 여기에는 아래 순서로 HTML 두 덩어리만 출력합니다.
 첫째, <div id="subsc"> ... </div>
@@ -235,7 +242,9 @@ Subtap HTML 작성 규칙
 - 실측사이즈 재는방법 링크 항목도 포함한다.
 - 가능하면 사용자가 예시로 준 마크업 스타일에 가깝게 작성한다.
 
-3. 상품 기획(전체 컨셉)
+-------------------------
+상품 기획(전체 컨셉)
+-------------------------
 
 3-0. 대표 이미지 & 3초훅
 대표이미지: (상단 이미지 참고)
@@ -250,9 +259,13 @@ Subtap HTML 작성 규칙
 
 3-4. 원단 포인트
 
-4. 소재/착용감(특장점 리스팅형식으로)
+-------------------------
+소재/착용감(특장점 리스팅형식으로)
+-------------------------
 
-5. 최하단 사이즈팁 작성
+-------------------------
+최하단 사이즈팁 작성
+-------------------------
 
 사이즈TIP 작성 규칙
 - 아래 4개 체형수치는 고정합니다.
@@ -303,37 +316,46 @@ def build_user_prompt(data: Dict[str, str]) -> str:
 
 최종 지시
 - 위 입력 데이터를 기준으로 작성합니다.
-- 1. 기본 사양부터 5. 최하단 사이즈팁 작성까지 정확히 출력합니다.
+- 섹션 제목은 반드시 아래위 구분선과 함께 출력합니다.
 - 2. 원고 양식에서는 반드시 subsc HTML 먼저, Subtap HTML 나중 순서로 출력합니다.
 - 상품설명 부분은 위 상품설명 작성 프롬프트를 그대로 적용합니다.
-- 1번, 3번, 4번, 5번은 일반 텍스트로 출력합니다.
+- 1번, 상품 기획, 소재/착용감, 최하단 사이즈팁은 일반 텍스트로 출력합니다.
 - HTML 외에는 코드펜스, 마크다운, 불필요한 설명을 넣지 않습니다.
 """
 
 st.subheader("상품정보 입력")
+title_col1, title_col2 = st.columns([8, 1])
+
+with title_col2:
+    if st.button("초기화", use_container_width=True):
+        st.session_state.reset_nonce += 1
+        st.rerun()
+
+nonce = st.session_state.reset_nonce
 
 col1, col2 = st.columns(2)
 
 with col1:
-    product_name = st.text_input("상품명", placeholder="예: 소프트 웜톤 루즈핏 맨투맨")
-    vendor_name = st.text_input("거래처 상품명", placeholder="예: 조이 오버핏 데님 자켓")
-    color = st.text_input("컬러", placeholder="예: 베이지, 그레이, 블랙")
-    size = st.text_input("사이즈", placeholder="예: FREE / S(55)~XL(88)")
-    material = st.text_input("소재", placeholder="예: 면80+나일론20")
-    detail_tip = st.text_input("디테일특징", placeholder="예: 가슴 절개라인이 더해진 와이드 오버핏")
+    product_name = st.text_input("상품명", placeholder="예: 소프트 웜톤 루즈핏 맨투맨", key=f"product_name_{nonce}")
+    vendor_name = st.text_input("거래처 상품명", placeholder="예: 조이 오버핏 데님 자켓", key=f"vendor_name_{nonce}")
+    color = st.text_input("컬러", placeholder="예: 베이지, 그레이, 블랙", key=f"color_{nonce}")
+    size = st.text_input("사이즈", placeholder="예: FREE / S(55)~XL(88)", key=f"size_{nonce}")
+    material = st.text_input("소재", placeholder="예: 면80+나일론20", key=f"material_{nonce}")
+    detail_tip = st.text_input("디테일특징", placeholder="예: 가슴 절개라인이 더해진 와이드 오버핏", key=f"detail_tip_{nonce}")
 
 with col2:
-    fit = st.text_input("핏/실루엣", placeholder="예: 상체 군살을 자연스럽게 커버하는 여유 있는 오버핏")
-    appeal_points = st.text_area("주요 어필 포인트", height=150, placeholder="예: 구김에 강함 / 체형 구애 없는 오버핏 / 절개 디테일 / 간절기 활용도")
-    target = st.text_input("타겟", value="4050 여성", placeholder="4050 여성")
-    washing = st.text_input("세탁방법", value="드라이클리닝, 단독 울코스 손세탁 권장", placeholder="드라이클리닝, 단독 울코스 손세탁 권장")
-    etc = st.text_area("기타", height=130, placeholder="예: free사이즈 77까지 추천 / 162-167cm 모델핏 참고 / 실측: 가슴둘레146 / 어깨-소매길이79.5 / 소매단둘레26.5 / 총길이78")
+    fit = st.text_input("핏/실루엣", placeholder="예: 상체 군살을 자연스럽게 커버하는 여유 있는 오버핏", key=f"fit_{nonce}")
+    appeal_points = st.text_area("주요 어필 포인트", height=150, placeholder="예: 구김에 강함 / 체형 구애 없는 오버핏 / 절개 디테일 / 간절기 활용도", key=f"appeal_points_{nonce}")
+    target = st.text_input("타겟", value="4050 여성", placeholder="4050 여성", key=f"target_{nonce}")
+    washing = st.text_input("세탁방법", value="드라이클리닝, 단독 울코스 손세탁 권장", placeholder="드라이클리닝, 단독 울코스 손세탁 권장", key=f"washing_{nonce}")
+    etc = st.text_area("기타", height=130, placeholder="예: free사이즈 77까지 추천 / 162-167cm 모델핏 참고 / 실측: 가슴둘레146 / 어깨-소매길이79.5 / 소매단둘레26.5 / 총길이78", key=f"etc_{nonce}")
 
 st.subheader("이미지 업로드 (텍스트 기반 + 이미지 보조)")
 uploaded_images = st.file_uploader(
     "이미지는 보조 참고용입니다. 텍스트 입력을 우선하고, 이미지는 핏/실루엣/분위기 판단에만 참고합니다.",
     type=["jpg", "jpeg", "png", "webp"],
     accept_multiple_files=True,
+    key=f"uploaded_images_{nonce}"
 )
 
 if uploaded_images:
@@ -343,9 +365,9 @@ if uploaded_images:
             st.image(img, use_container_width=True, caption=img.name)
 
 with st.expander("현재 적용 중인 출력 규칙 보기", expanded=False):
-    st.text_area("출력 규칙", OUTPUT_RULES, height=520, disabled=True)
+    st.text_area("출력 규칙", OUTPUT_RULES, height=560, disabled=True)
 
-if st.button("생성하기", type="primary", use_container_width=True):
+if st.button("생성하기", type="primary", use_container_width=True, key=f"generate_{nonce}"):
     if not product_name.strip():
         st.warning("상품명을 입력해 주세요.")
         st.stop()
@@ -376,7 +398,7 @@ if st.button("생성하기", type="primary", use_container_width=True):
             messages=[
                 {
                     "role": "system",
-                    "content": "당신은 미샵의 실무 문서 출력기다. 사용자가 준 순서와 양식을 절대 바꾸지 말고, 2번에서는 subsc HTML을 먼저, Subtap HTML을 나중에 출력한다. 상품설명 HTML은 사용자가 준 상품설명 프롬프트를 반드시 따른다."
+                    "content": "당신은 미샵의 실무 문서 출력기다. 사용자가 준 순서와 양식을 절대 바꾸지 말고, 2번에서는 subsc HTML을 먼저, Subtap HTML을 나중에 출력한다. 섹션 제목은 반드시 구분선으로 감싸서 출력한다. 상품설명 HTML은 사용자가 준 상품설명 프롬프트를 반드시 따른다."
                 },
                 {
                     "role": "user",
@@ -388,7 +410,7 @@ if st.button("생성하기", type="primary", use_container_width=True):
         result = response.choices[0].message.content
 
     st.success("생성이 완료되었습니다.")
-    st.text_area("결과", result, height=1100)
+    st.text_area("결과", result, height=1100, key=f"result_{nonce}")
 
     st.download_button(
         "TXT 다운로드",
@@ -396,6 +418,7 @@ if st.button("생성하기", type="primary", use_container_width=True):
         file_name=f"{product_name}_page_builder.txt",
         mime="text/plain",
         use_container_width=True,
+        key=f"download_{nonce}"
     )
 
 st.markdown("---")
