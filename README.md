@@ -1,21 +1,14 @@
-# page-builder
+# page-builder-final-v8
 
-미샵 전환형 상세페이지 기획 + HTML 원고 통합 생성기
+형준님 수정 요청 반영 버전
 
-## 포함 파일
-- app.py
-- requirements.txt
-- .streamlit/secrets.toml
+## 반영 내용
+- 입력창 항목 재구성
+- 타겟/세탁방법도 입력창으로 복원
+- 2번 원고 양식에서만 HTML 출력
+- 나머지 섹션은 일반 텍스트 출력
+- 사용자 양식 순서 강제
 
-## 로컬 실행
-```bash
+## 실행
 pip install -r requirements.txt
 streamlit run app.py
-```
-
-## Streamlit Cloud
-Secrets에 아래를 등록하세요.
-
-```toml
-OPENAI_API_KEY="YOUR_API_KEY"
-```
