@@ -17,6 +17,22 @@ st.markdown("""
 <style>
 .block-container {padding-top: 1.8rem; padding-bottom: 2rem;}
 textarea, input {font-size: 15px !important;}
+.field-label {
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin-bottom: 0.2rem;
+}
+.field-label .hint {
+    font-weight: 500;
+    color: #666;
+    font-size: 0.9rem;
+    margin-left: 4px;
+}
+.tight-row {
+    display:flex;
+    align-items:end;
+    gap:8px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -198,18 +214,18 @@ ChatGPT는 입력된 상품 정보를 기반으로
 OUTPUT_RULES = """
 최종 출력은 반드시 아래 순서와 제목을 그대로 지켜 하나의 텍스트 문서로 작성합니다.
 
--------------------------
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 기본사양
--------------------------
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 상품명 : 상품명 (컬러)
 사이즈 :
 소재 :
 디테일 팁 :
 
--------------------------
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 원고 양식
--------------------------
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 여기에는 아래 순서로 HTML 두 덩어리만 출력합니다.
 첫째, <div id="subsc"> ... </div>
@@ -242,9 +258,9 @@ Subtap HTML 작성 규칙
 - 실측사이즈 재는방법 링크 항목도 포함한다.
 - 가능하면 사용자가 예시로 준 마크업 스타일에 가깝게 작성한다.
 
--------------------------
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 상품 기획(전체 컨셉)
--------------------------
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 3-0. 대표 이미지 & 3초훅
 대표이미지: (상단 이미지 참고)
@@ -259,13 +275,13 @@ Subtap HTML 작성 규칙
 
 3-4. 원단 포인트
 
--------------------------
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 소재/착용감(특장점 리스팅형식으로)
--------------------------
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
--------------------------
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 최하단 사이즈팁 작성
--------------------------
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 사이즈TIP 작성 규칙
 - 아래 4개 체형수치는 고정합니다.
@@ -306,6 +322,7 @@ def build_user_prompt(data: Dict[str, str]) -> str:
 - 거래처 상품명: {data['vendor_name']}
 - 컬러: {data['color']}
 - 사이즈: {data['size']}
+- 실측사이즈: {data['measurement']}
 - 소재: {data['material']}
 - 디테일특징: {data['detail_tip']}
 - 핏/실루엣: {data['fit']}
@@ -316,7 +333,7 @@ def build_user_prompt(data: Dict[str, str]) -> str:
 
 최종 지시
 - 위 입력 데이터를 기준으로 작성합니다.
-- 섹션 제목은 반드시 아래위 구분선과 함께 출력합니다.
+- 섹션 제목은 반드시 아래위 긴 한 줄 구분선과 함께 출력합니다.
 - 2. 원고 양식에서는 반드시 subsc HTML 먼저, Subtap HTML 나중 순서로 출력합니다.
 - 상품설명 부분은 위 상품설명 작성 프롬프트를 그대로 적용합니다.
 - 1번, 상품 기획, 소재/착용감, 최하단 사이즈팁은 일반 텍스트로 출력합니다.
@@ -324,7 +341,7 @@ def build_user_prompt(data: Dict[str, str]) -> str:
 """
 
 st.subheader("상품정보 입력")
-title_col1, title_col2 = st.columns([8, 1])
+title_col1, title_col2, title_col3 = st.columns([2.2, 0.7, 7.1])
 
 with title_col2:
     if st.button("초기화", use_container_width=True):
@@ -340,15 +357,24 @@ with col1:
     vendor_name = st.text_input("거래처 상품명", placeholder="예: 조이 오버핏 데님 자켓", key=f"vendor_name_{nonce}")
     color = st.text_input("컬러", placeholder="예: 베이지, 그레이, 블랙", key=f"color_{nonce}")
     size = st.text_input("사이즈", placeholder="예: FREE / S(55)~XL(88)", key=f"size_{nonce}")
+    measurement = st.text_input("실측사이즈", placeholder="예: 가슴둘레146 / 어깨-소매79.5 / 소매단26.5 / 총길이78", key=f"measurement_{nonce}")
     material = st.text_input("소재", placeholder="예: 면80+나일론20", key=f"material_{nonce}")
-    detail_tip = st.text_input("디테일특징", placeholder="예: 가슴 절개라인이 더해진 와이드 오버핏", key=f"detail_tip_{nonce}")
+
+    st.markdown('<div class="field-label">디테일 특징<span class="hint">(예:디자인, 절개라인, 부자재, 스펙상 특징 등)</span></div>', unsafe_allow_html=True)
+    detail_tip = st.text_input("", placeholder="예: 가슴 절개라인이 더해진 와이드 오버핏", key=f"detail_tip_{nonce}", label_visibility="collapsed")
 
 with col2:
-    fit = st.text_input("핏/실루엣", placeholder="예: 상체 군살을 자연스럽게 커버하는 여유 있는 오버핏", key=f"fit_{nonce}")
-    appeal_points = st.text_area("주요 어필 포인트", height=150, placeholder="예: 구김에 강함 / 체형 구애 없는 오버핏 / 절개 디테일 / 간절기 활용도", key=f"appeal_points_{nonce}")
+    st.markdown('<div class="field-label">핏/실루엣 <span class="hint">(예:정핏,레귤러핏,오버핏 등/체형커버, 다리길어보이는 등의 특장점)</span></div>', unsafe_allow_html=True)
+    fit = st.text_input("", placeholder="예: 상체 군살을 자연스럽게 커버하는 여유 있는 오버핏", key=f"fit_{nonce}", label_visibility="collapsed")
+
+    st.markdown('<div class="field-label">주요 어필 포인트<span class="hint">(예:원단 구김, 체형커버, 계절성, 코디 활용도 등)</span></div>', unsafe_allow_html=True)
+    appeal_points = st.text_area("", height=150, placeholder="예: 구김에 강함 / 체형 구애 없는 오버핏 / 절개 디테일 / 간절기 활용도", key=f"appeal_points_{nonce}", label_visibility="collapsed")
+
     target = st.text_input("타겟", value="4050 여성", placeholder="4050 여성", key=f"target_{nonce}")
     washing = st.text_input("세탁방법", value="드라이클리닝, 단독 울코스 손세탁 권장", placeholder="드라이클리닝, 단독 울코스 손세탁 권장", key=f"washing_{nonce}")
-    etc = st.text_area("기타", height=130, placeholder="예: free사이즈 77까지 추천 / 162-167cm 모델핏 참고 / 실측: 가슴둘레146 / 어깨-소매길이79.5 / 소매단둘레26.5 / 총길이78", key=f"etc_{nonce}")
+
+    st.markdown('<div class="field-label">기타<span class="hint">(가격 경쟁력, 가성비 등)</span></div>', unsafe_allow_html=True)
+    etc = st.text_area("", height=130, placeholder="예: free사이즈 77까지 추천 / 162-167cm 모델핏 참고 / 가격 경쟁력 우수", key=f"etc_{nonce}", label_visibility="collapsed")
 
 st.subheader("이미지 업로드 (텍스트 기반 + 이미지 보조)")
 uploaded_images = st.file_uploader(
@@ -377,6 +403,7 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
         "vendor_name": vendor_name,
         "color": color,
         "size": size,
+        "measurement": measurement,
         "material": material,
         "detail_tip": detail_tip,
         "fit": fit,
@@ -398,7 +425,7 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
             messages=[
                 {
                     "role": "system",
-                    "content": "당신은 미샵의 실무 문서 출력기다. 사용자가 준 순서와 양식을 절대 바꾸지 말고, 2번에서는 subsc HTML을 먼저, Subtap HTML을 나중에 출력한다. 섹션 제목은 반드시 구분선으로 감싸서 출력한다. 상품설명 HTML은 사용자가 준 상품설명 프롬프트를 반드시 따른다."
+                    "content": "당신은 미샵의 실무 문서 출력기다. 사용자가 준 순서와 양식을 절대 바꾸지 말고, 2번에서는 subsc HTML을 먼저, Subtap HTML을 나중에 출력한다. 섹션 제목은 반드시 아래위 긴 한 줄 구분선으로 감싸서 출력한다. 상품설명 HTML은 사용자가 준 상품설명 프롬프트를 반드시 따른다."
                 },
                 {
                     "role": "user",
