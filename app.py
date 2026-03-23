@@ -17,6 +17,51 @@ if "reset_nonce" not in st.session_state:
 st.title("MISHARP PAGE BUILDER")
 st.caption("구매전환율 상승을 위한 상세페이지 기획 + 상품 원고 생성기")
 
+st.markdown("""
+<style>
+/* 타이틀 아래 구분선 */
+.title-divider{
+    border:0;
+    border-top:1px solid rgba(128,128,128,0.35);
+    margin: 0.35rem 0 2.2rem 0;
+}
+
+/* 섹션 간격 */
+.block-container{
+    padding-top: 1.8rem;
+    padding-bottom: 2.4rem;
+}
+
+/* 입력 소제목 폰트 소폭 확대 */
+div[data-testid="stTextInput"] label p,
+div[data-testid="stTextArea"] label p,
+div[data-testid="stFileUploader"] label p{
+    font-size: 1.03rem !important;
+    font-weight: 600 !important;
+}
+
+/* 입력칸 세로 간격 확대 */
+div[data-testid="stTextInput"]{
+    margin-bottom: 1.55rem;
+}
+div[data-testid="stTextArea"]{
+    margin-bottom: 1.55rem;
+}
+
+/* 이미지 업로드 섹션 위 여백 확대 */
+.image-upload-wrap{
+    margin-top: 1.4rem;
+}
+
+/* 파일 업로더 아래 간격도 넓게 */
+div[data-testid="stFileUploader"]{
+    margin-bottom: 1.7rem;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown('<hr class="title-divider">', unsafe_allow_html=True)
+
 api_key = st.secrets.get("OPENAI_API_KEY", "")
 if not api_key:
     st.warning("OPENAI_API_KEY가 설정되지 않았습니다. Streamlit Cloud Secrets 또는 .streamlit/secrets.toml을 확인해 주세요.")
@@ -253,9 +298,10 @@ with right:
         key=f"etc_{nonce}"
     )
 
-st.subheader("이미지 업로드 (텍스트 기반 + 이미지 보조)")
+st.markdown('<div class="image-upload-wrap"></div>', unsafe_allow_html=True)
+st.subheader("이미지 업로드")
 uploaded_images = st.file_uploader(
-    "이미지는 보조 참고용입니다. 텍스트 입력을 우선하고, 이미지는 핏/실루엣/분위기 판단에만 참고합니다.",
+    "",
     type=["jpg", "jpeg", "png", "webp"],
     accept_multiple_files=True,
     key=f"uploaded_images_{nonce}"
