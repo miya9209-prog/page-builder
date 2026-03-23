@@ -339,4 +339,4 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
         )
 
 st.markdown("---")
-st.markdown("© made by MISHARP, MIYAWA")
+st.markdown("© made by MISHARP, MIYAWA. All rights reserved.")
