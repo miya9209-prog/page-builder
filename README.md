@@ -1,9 +1,9 @@
-# page-builder-final-v14-fixed
+# page-builder-stable-v15
 
-에러 수정 + 직원 피드백 반영 안정 버전
+안정화 버전
 
-## 반영 사항
-- NameError 제거
-- [상품 포인트]로 고정
-- 포인트 코멘트 구조 반영
+## 수정
+- 깨진 HTML/CSS 렌더링 제거
+- Streamlit 기본 컴포넌트만 사용
+- 기존 기능 유지
 - TXT / DOCX 다운로드 유지
