@@ -14,8 +14,8 @@ st.set_page_config(page_title="PAGE BUILDER", layout="wide")
 if "reset_nonce" not in st.session_state:
     st.session_state.reset_nonce = 0
 
-st.title("MISHARP 상품문구 생성기")
-st.caption("미샵 상세페이지 기획 + 원고 생성기")
+st.title("MISHARP PAGE BUILDER")
+st.caption("구매전환율 상승을 위한 상세페이지 기획 + 상품 원고 생성기")
 
 api_key = st.secrets.get("OPENAI_API_KEY", "")
 if not api_key:
