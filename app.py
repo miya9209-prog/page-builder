@@ -234,7 +234,7 @@ with left:
 
 with right:
     fit = st.text_input(
-        "핏/실루엣 (예:정핏,레귤러핏,오버핏 등/체형커버, 다리길어보이는 등의 특장점)",
+        "핏/실루엣 (예:정핏,레귤러핏,오버핏 등/체형커버, 다리길어보이는, 어려보이는, 날씬해보이는 등의 특장점)",
         placeholder="예: 상체 군살을 자연스럽게 커버하는 여유 있는 오버핏",
         key=f"fit_{nonce}"
     )
@@ -247,7 +247,7 @@ with right:
     target = st.text_input("타겟", value="4050 여성", placeholder="4050 여성", key=f"target_{nonce}")
     washing = st.text_input("세탁방법", value="드라이클리닝, 단독 울코스 손세탁 권장", placeholder="드라이클리닝, 단독 울코스 손세탁 권장", key=f"washing_{nonce}")
     etc = st.text_area(
-        "기타 (가격 경쟁력, 가성비 등)",
+        "기타 (브랜드 퀄리티, 가격 경쟁력, 가성비, 기능성 등)",
         height=130,
         placeholder="예: free사이즈 77까지 추천 / 162-167cm 모델핏 참고 / 가격 경쟁력 우수",
         key=f"etc_{nonce}"
