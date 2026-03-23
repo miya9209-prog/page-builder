@@ -1,9 +1,13 @@
 import base64
+import io
 import mimetypes
 from typing import List, Dict, Any
 
 import streamlit as st
 from openai import OpenAI
+from docx import Document
+from docx.shared import Pt
+from docx.oxml.ns import qn
 
 st.set_page_config(page_title="page-builder", layout="wide")
 
@@ -28,10 +32,16 @@ textarea, input {font-size: 15px !important;}
     font-size: 0.9rem;
     margin-left: 4px;
 }
-.tight-row {
-    display:flex;
-    align-items:end;
-    gap:8px;
+.title-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.title-row .title-text {
+    font-size: 1.55rem;
+    font-weight: 700;
+    margin: 0;
+    line-height: 1.2;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -214,18 +224,18 @@ ChatGPT는 입력된 상품 정보를 기반으로
 OUTPUT_RULES = """
 최종 출력은 반드시 아래 순서와 제목을 그대로 지켜 하나의 텍스트 문서로 작성합니다.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 기본사양
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 상품명 : 상품명 (컬러)
 사이즈 :
 소재 :
 디테일 팁 :
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 원고 양식
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 여기에는 아래 순서로 HTML 두 덩어리만 출력합니다.
 첫째, <div id="subsc"> ... </div>
@@ -258,9 +268,9 @@ Subtap HTML 작성 규칙
 - 실측사이즈 재는방법 링크 항목도 포함한다.
 - 가능하면 사용자가 예시로 준 마크업 스타일에 가깝게 작성한다.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 상품 기획(전체 컨셉)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 3-0. 대표 이미지 & 3초훅
 대표이미지: (상단 이미지 참고)
@@ -275,13 +285,13 @@ Subtap HTML 작성 규칙
 
 3-4. 원단 포인트
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 소재/착용감(특장점 리스팅형식으로)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 최하단 사이즈팁 작성
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 사이즈TIP 작성 규칙
 - 아래 4개 체형수치는 고정합니다.
@@ -340,10 +350,30 @@ def build_user_prompt(data: Dict[str, str]) -> str:
 - HTML 외에는 코드펜스, 마크다운, 불필요한 설명을 넣지 않습니다.
 """
 
-st.subheader("상품정보 입력")
-title_col1, title_col2, title_col3 = st.columns([2.2, 0.7, 7.1])
+def result_to_docx_bytes(result_text: str) -> bytes:
+    doc = Document()
+    style = doc.styles["Normal"]
+    style.font.name = "Malgun Gothic"
+    style._element.rPr.rFonts.set(qn("w:eastAsia"), "Malgun Gothic")
+    style.font.size = Pt(10.5)
 
+    for line in result_text.splitlines():
+        p = doc.add_paragraph()
+        run = p.add_run(line)
+        run.font.name = "Malgun Gothic"
+        run._element.rPr.rFonts.set(qn("w:eastAsia"), "Malgun Gothic")
+        run.font.size = Pt(10.5)
+
+    bio = io.BytesIO()
+    doc.save(bio)
+    bio.seek(0)
+    return bio.getvalue()
+
+title_col1, title_col2, title_col3 = st.columns([1.8, 0.9, 8.3])
+with title_col1:
+    st.markdown('<div class="title-row"><div class="title-text">상품정보 입력</div></div>', unsafe_allow_html=True)
 with title_col2:
+    st.markdown('<div style="height: 2px;"></div>', unsafe_allow_html=True)
     if st.button("초기화", use_container_width=True):
         st.session_state.reset_nonce += 1
         st.rerun()
@@ -439,14 +469,27 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
     st.success("생성이 완료되었습니다.")
     st.text_area("결과", result, height=1100, key=f"result_{nonce}")
 
-    st.download_button(
-        "TXT 다운로드",
-        data=result,
-        file_name=f"{product_name}_page_builder.txt",
-        mime="text/plain",
-        use_container_width=True,
-        key=f"download_{nonce}"
-    )
+    docx_bytes = result_to_docx_bytes(result)
+
+    dl1, dl2 = st.columns(2)
+    with dl1:
+        st.download_button(
+            "TXT 다운로드",
+            data=result,
+            file_name=f"{product_name}_page_builder.txt",
+            mime="text/plain",
+            use_container_width=True,
+            key=f"download_txt_{nonce}"
+        )
+    with dl2:
+        st.download_button(
+            "한글 호환 DOCX 다운로드",
+            data=docx_bytes,
+            file_name=f"{product_name}_page_builder.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True,
+            key=f"download_docx_{nonce}"
+        )
 
 st.markdown("---")
 st.markdown("© made by MISHARP, MIYAWA")
