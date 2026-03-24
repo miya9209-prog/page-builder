@@ -16,6 +16,8 @@ if "reset_nonce" not in st.session_state:
     st.session_state.reset_nonce = 0
 if "naming_result" not in st.session_state:
     st.session_state.naming_result = ""
+if "naming_input_value" not in st.session_state:
+    st.session_state.naming_input_value = ""
 
 st.title("MISHARP PAGE BUILDER")
 st.caption("구매전환율 상승을 위한 상세페이지 기획 + 상품 원고 생성기")
@@ -163,6 +165,26 @@ def combine_measurements(top_text: str, bottom_text: str, dress_text: str):
         lines.extend(extract_lines_with_digits(block))
     return " / ".join(lines) if lines else "실측사이즈 정보를 입력해 주세요."
 
+def build_user_prompt(data: Dict[str, str]) -> str:
+    return f"""
+{PRODUCT_COPY_PROMPT}
+
+{OUTPUT_RULES}
+
+입력 데이터
+- 상품명: {data['product_name']}
+- 컬러: {data['color']}
+- 사이즈: {data['size']}
+- 실측사이즈: {data['measurement']}
+- 소재: {data['material']}
+- 디테일특징: {data['detail_tip']}
+- 핏/실루엣: {data['fit']}
+- 주요 어필 포인트: {data['appeal_points']}
+- 타겟: {data['target']}
+- 세탁방법: {data['washing']}
+- 기타: {data['etc']}
+"""
+
 def build_subtap_html(data: Dict[str, str]):
     material_items = [x.strip() for x in (data["material"] or "").split("+") if x.strip()]
     material_line = " + ".join(material_items) if material_items else "소재 정보 입력 필요"
@@ -304,12 +326,14 @@ def assemble_final_output(raw_result: str, source_block: str, data: Dict[str, st
     lines.append("")
     lines.append("1. 동영상")
     lines.append("")
-    for sec in [
-        extract_block(raw_result, "2. 헤드라인", ["3. (원단컷)"]),
-        extract_block(raw_result, "3. (원단컷)", ["4. (디테일컷)"]),
-        extract_block(raw_result, "4. (디테일컷)", ["5. (핵심어필 포인트)", "5. (핵심 어필 포인트)"]).replace("5. (핵심 어필 포인트)", "5. (핵심어필 포인트)"),
-        extract_block(raw_result, "5. (핵심어필 포인트)", ["---------------------------------", "텍스트 소스", "이런 분께 추천해요"]) if "5. (핵심어필 포인트)" in raw_result else extract_block(raw_result, "5. (핵심 어필 포인트)", ["---------------------------------", "텍스트 소스", "이런 분께 추천해요"]).replace("5. (핵심 어필 포인트)", "5. (핵심어필 포인트)")
-    ]:
+    sec2 = extract_block(raw_result, "2. 헤드라인", ["3. (원단컷)"])
+    sec3 = extract_block(raw_result, "3. (원단컷)", ["4. (디테일컷)"])
+    sec4 = extract_block(raw_result, "4. (디테일컷)", ["5. (핵심어필 포인트)", "5. (핵심 어필 포인트)"]).replace("5. (핵심 어필 포인트)", "5. (핵심어필 포인트)")
+    if "5. (핵심어필 포인트)" in raw_result:
+        sec5 = extract_block(raw_result, "5. (핵심어필 포인트)", ["---------------------------------", "텍스트 소스", "이런 분께 추천해요"])
+    else:
+        sec5 = extract_block(raw_result, "5. (핵심 어필 포인트)", ["---------------------------------", "텍스트 소스", "이런 분께 추천해요"]).replace("5. (핵심 어필 포인트)", "5. (핵심어필 포인트)")
+    for sec in [sec2, sec3, sec4, sec5]:
         lines.append(sec)
         lines.append("")
     lines.append("---------------------------------")
@@ -333,10 +357,7 @@ def assemble_final_output(raw_result: str, source_block: str, data: Dict[str, st
     lines.append("")
     for title in ["ㅇ55 (90) 160cm 48kg", "ㅇ66 (95) 165cm 54kg", "ㅇ66반 (95) 164cm 58kg", "ㅇ77 (100) 163cm 61kg"]:
         block = extract_block(raw_result, title, ["ㅇ55 (90) 160cm 48kg", "ㅇ66 (95) 165cm 54kg", "ㅇ66반 (95) 164cm 58kg", "ㅇ77 (100) 163cm 61kg"])
-        if block == title:
-            lines.append(title)
-        else:
-            lines.append(block)
+        lines.append(block if block != title else title)
         lines.append("")
     return "\n".join(lines).strip()
 
@@ -360,12 +381,13 @@ def result_to_docx_bytes(result_text: str):
 def reset_all():
     st.session_state.reset_nonce += 1
     st.session_state.naming_result = ""
+    st.session_state.naming_input_value = ""
 
 st.markdown("---")
 st.subheader("상품 네이밍")
 ncol1, ncol2 = st.columns([5, 1])
 with ncol1:
-    naming_input = st.text_area("상품 주요특징 입력", height=120, placeholder="예: 여리핏, 부드러운 엠보 텍스처, 상체 군살 커버, 루즈핏 맨투맨", key=f"naming_input_{st.session_state.reset_nonce}")
+    naming_input = st.text_area("상품 주요특징 입력", height=120, placeholder="예: 여리핏, 부드러운 엠보 텍스처, 상체 군살 커버, 루즈핏 맨투맨", key="naming_input_value")
 with ncol2:
     st.write("")
     if st.button("네이밍 생성", use_container_width=True):
@@ -377,6 +399,8 @@ with ncol2:
                     temperature=0.5,
                 )
                 st.session_state.naming_result = response.choices[0].message.content.strip()
+        else:
+            st.warning("상품 주요특징을 입력해 주세요.")
 
 st.text_area("상품 네이밍 제안 20개", value=st.session_state.naming_result, height=250, key=f"naming_output_{st.session_state.reset_nonce}")
 st.markdown("---")
@@ -434,7 +458,6 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
     }
     prompt_text = build_user_prompt({
         "product_name": product_name,
-        "vendor_name": "",
         "color": color,
         "size": size,
         "measurement": combine_measurements(top_measure, bottom_measure, dress_measure),
