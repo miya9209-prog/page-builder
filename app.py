@@ -19,6 +19,12 @@ if "naming_result" not in st.session_state:
 if "naming_input_value" not in st.session_state:
     st.session_state.naming_input_value = ""
 
+st.markdown("""
+<style>
+div[data-testid="stButton"] > button { min-height: 42px; }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("MISHARP PAGE BUILDER")
 st.caption("구매전환율 상승을 위한 상세페이지 기획 + 상품 원고 생성기")
 
@@ -203,78 +209,52 @@ def build_subtap_html(data: Dict[str, str]):
     return f"""<div id="Subtap">
 \t<div id="header2" role="banner">
 \t\t<nav class="nav" role="navigation">
-
 \t\t\t<ul class="nav__list">
 \t\t\t\t<li>
 \t\t\t\t\t<input id="group-1" type="checkbox" hidden="">
 \t\t\t\t\t<label for="group-1" style="border-top-color: rgb(204, 204, 204); border-top-width: 1px; border-top-style: solid;">
-
 \t\t\t\t\t\t<p class="fa fa-angle-right"></p>소재 정보</label>
-
 \t\t\t\t\t<ul class="group-list">
 \t\t\t\t\t\t<li>
 \t\t\t\t\t\t\t<a href="#">
-
 \t\t\t\t\t\t\t\t<h3>소재 : {material_line}</h3>
-
-\t\t\t\t\t\t\t\t<p>
-\t\t\t\t\t\t\t\t\t{material_desc_html}
-\t\t\t\t\t\t\t\t</p>
-
+\t\t\t\t\t\t\t\t<p>{material_desc_html}</p>
 \t\t\t\t\t\t\t\t<h3>세탁방법</h3>
-
 \t\t\t\t\t\t\t\t<p>{washing}</p>
 \t\t\t\t\t\t\t</a>
 \t\t\t\t\t\t</li>
 \t\t\t\t\t</ul>
 \t\t\t\t</li>
-
 \t\t\t\t<li>
 \t\t\t\t\t<input id="group-2" type="checkbox" hidden="">
 \t\t\t\t\t<label for="group-2">
-
 \t\t\t\t\t\t<p class="fa fa-angle-right"></p>사이즈 정보</label>
-
 \t\t\t\t\t<ul class="group-list gray">
 \t\t\t\t\t\t<li>
 \t\t\t\t\t\t\t<a href="#">
-
 \t\t\t\t\t\t\t\t<h3>사이즈 TIP</h3>
-
-\t\t\t\t\t\t\t\t<p>
-\t\t\t\t\t\t\t\t\t{size_tip}
-\t\t\t\t\t\t\t\t</p>
-
+\t\t\t\t\t\t\t\t<p>{size_tip}</p>
 \t\t\t\t\t\t\t\t<h3>길이 TIP</h3>
-
-\t\t\t\t\t\t\t\t<p>
-\t\t\t\t\t\t\t\t\t162-167cm에서는 모델핏을 참고해 주시고,
+\t\t\t\t\t\t\t\t<p>162-167cm에서는 모델핏을 참고해 주시고,
 <br> 다리 길이나 체형에 따라 다르지만,
 <br> 160cm이하에서는 모델의 핏보다 조금 길게
-<br> 연출됩니다.
-\t\t\t\t\t\t\t\t</p>
+<br> 연출됩니다.</p>
 \t\t\t\t\t\t\t</a>
 \t\t\t\t\t\t</li>
 \t\t\t\t\t</ul>
 \t\t\t\t</li>
-
 \t\t\t\t<li>
 \t\t\t\t\t<input id="group-3" type="checkbox" hidden="">
 \t\t\t\t\t<label for="group-3">
-
 \t\t\t\t\t\t<p class="fa fa-angle-right"></p>실측 사이즈</label>
-
 \t\t\t\t\t<ul class="group-list">
 \t\t\t\t\t\t<li>
 \t\t\t\t\t\t\t<a href="#">
-
 \t\t\t\t\t\t\t\t<p>{measurement}</p>
-
 \t\t\t\t\t\t\t</a>
 \t\t\t\t\t\t</li>
 \t\t\t\t\t</ul>
 \t\t\t\t</li>
-
 \t\t\t\t<li>
 \t\t\t\t\t<input id="group-5" type="checkbox" hidden="">
 \t\t\t\t\t<label for="group-5"><span class="fa fa-angle-right"></span>
@@ -385,11 +365,10 @@ def reset_all():
 
 st.markdown("---")
 st.subheader("상품 네이밍")
-ncol1, ncol2 = st.columns([5, 1])
+ncol1, ncol2 = st.columns([5, 1], vertical_alignment="bottom")
 with ncol1:
     naming_input = st.text_area("상품 주요특징 입력", height=120, placeholder="예: 여리핏, 부드러운 엠보 텍스처, 상체 군살 커버, 루즈핏 맨투맨", key="naming_input_value")
 with ncol2:
-    st.write("")
     if st.button("네이밍 생성", use_container_width=True):
         if naming_input.strip():
             with st.spinner("상품명을 생성 중입니다..."):
@@ -399,17 +378,17 @@ with ncol2:
                     temperature=0.5,
                 )
                 st.session_state.naming_result = response.choices[0].message.content.strip()
+                st.rerun()
         else:
             st.warning("상품 주요특징을 입력해 주세요.")
 
-st.text_area("상품 네이밍 제안 20개", value=st.session_state.naming_result, height=250, key=f"naming_output_{st.session_state.reset_nonce}")
+st.text_area("상품 네이밍 제안 20개", value=st.session_state.naming_result, height=250)
 st.markdown("---")
 
-h1, h2 = st.columns([2.2, 1.0])
+h1, h2 = st.columns([2.2, 1.0], vertical_alignment="bottom")
 with h1:
     st.subheader("상품정보 입력")
 with h2:
-    st.write("")
     st.button("초기화", use_container_width=True, on_click=reset_all)
 
 nonce = st.session_state.reset_nonce
