@@ -1,6 +1,7 @@
 import base64
 import io
 import mimetypes
+import re
 from typing import List, Dict, Any
 
 import streamlit as st
@@ -42,16 +43,11 @@ PRODUCT_COPY_PROMPT = """
 - [쇼핑에 꼭 참고하세요] 대신 [상품 포인트]를 사용합니다.
 - 동영상 안내 문구는 절대 작성하지 않습니다.
 - 실측사이즈 입력 여부와 관계없이 사이즈 팁 4개는 반드시 모두 작성합니다.
-- 사이즈 팁은 아래 4개 체형 기준으로 각각 2~3줄씩 실제 고객에게 어필할 수 있게 작성합니다.
 
-ㅇ55 (90) 160cm 48kg
-ㅇ66 (95) 165cm 54kg
-ㅇ66반 (95) 164cm 58kg
-ㅇ77 (100) 163cm 61kg
+이번 응답에서는 "원고 양식" 안의 HTML 중 오직 <div id="subsc"> ... </div> 만 작성합니다.
+<meta>, <link>, <div id="Subtap"> 는 작성하지 않습니다.
 
 상품설명 HTML 규칙
-- 상품설명은 반드시 아래 구조를 지킵니다.
-
 <div id="subsc">
   <h3>상품명</h3>
   <p>
@@ -66,16 +62,6 @@ PRODUCT_COPY_PROMPT = """
 4. 소제목은 <strong style="font-weight:700 !important;"> 태그를 사용합니다.
 5. 줄바꿈은 <br>, 문단 구분은 <br><br> 사용합니다.
 6. HTML 외 마크다운, 코드펜스 사용 금지입니다.
-
-본문 구조
-- 상품명 하단 소개 2줄
-- [상품 포인트]
-- [이 상품을 초이스한 이유입니다.]
-- [원단과 두께 체감에 대하여]
-- [체형과 핏, 사이즈 선택 가이드]
-- [이렇게 입는 날이 많아집니다]
-- [구매 전 꼭 확인해 주세요]
-- 감성 마무리 문장
 """
 
 OUTPUT_RULES = """
@@ -98,18 +84,6 @@ OUTPUT_RULES = """
 1. 고정 메타/링크 코드
 2. <div id="subsc"> ... </div>
 3. <div id="Subtap"> ... </div>
-
-중요
-- 원고 양식 최상단 첫 줄은 반드시 <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1"> 로 시작해야 합니다.
-- 그 아래 나머지 meta/link 코드가 그대로 이어져야 합니다.
-- 그 다음에 <div id="subsc"> 가 와야 합니다.
-- 마지막에 <div id="Subtap"> 가 와야 합니다.
-
-Subtap HTML 작성 규칙
-- 소재 정보에는 소재 설명 + 세탁방법을 넣습니다.
-- 사이즈 정보에는 사이즈 TIP + 길이 TIP을 넣습니다.
-- 실측 사이즈에는 입력된 실측사이즈를 정리해 넣습니다.
-- 실측사이즈 재는방법 링크 항목을 포함합니다.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 포인트 코멘트
@@ -143,28 +117,19 @@ Subtap HTML 작성 규칙
 ㅇ66 (95) 165cm 54kg
 ㅇ66반 (95) 164cm 58kg
 ㅇ77 (100) 163cm 61kg
-
-중요 삭제 규칙
-- 코디제안, 코디컷 가이드, 리뷰포인트, CTA는 절대 출력하지 않습니다.
 """
 
 def file_to_content_item(uploaded_file):
     mime = uploaded_file.type or mimetypes.guess_type(uploaded_file.name)[0] or "image/jpeg"
     data = uploaded_file.read()
     b64 = base64.b64encode(data).decode("utf-8")
-    return {
-        "type": "image_url",
-        "image_url": {"url": f"data:{mime};base64,{b64}"}
-    }
+    return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
 
 def build_user_prompt(data: Dict[str, str]) -> str:
     return f"""
 {PRODUCT_COPY_PROMPT}
 
 {OUTPUT_RULES}
-
-고정 헤더 코드
-{FIXED_HTML_HEAD}
 
 입력 데이터
 - 상품명: {data['product_name']}
@@ -179,37 +144,131 @@ def build_user_prompt(data: Dict[str, str]) -> str:
 - 타겟: {data['target']}
 - 세탁방법: {data['washing']}
 - 기타: {data['etc']}
-
-최종 지시
-- 위 입력 데이터를 기준으로 작성합니다.
-- 원고 양식의 첫 줄에는 반드시 고정 메타/링크 코드를 그대로 먼저 출력합니다.
-- 그 다음에 subsc HTML, 그 다음에 Subtap HTML 순서로 출력합니다.
-- 동영상 섹션에는 문장을 쓰지 말고 비워둡니다.
-- 사이즈 팁은 4개 체형 모두 반드시 채웁니다.
-- HTML 외에는 코드펜스, 마크다운, 불필요한 설명을 넣지 않습니다.
 """
 
-def force_fixed_html_order(result: str, product_name: str) -> str:
-    if '<div id="subsc">' in result:
-        start = result.find('<div id="subsc">')
-        end = result.find('</div>', start)
-        if end != -1:
-            subsc_block = result[start:end+6]
-            if '<h3>' not in subsc_block:
-                subsc_block_fixed = subsc_block.replace(
-                    '<div id="subsc">',
-                    f'<div id="subsc">\n  <h3>{product_name or "상품명"}</h3>',
-                    1
-                )
-                result = result.replace(subsc_block, subsc_block_fixed, 1)
+def build_subtap_html(data: Dict[str, str]) -> str:
+    material = (data["material"] or "").strip() or "소재 정보 입력 필요"
+    washing = (data["washing"] or "").strip() or "드라이클리닝, 단독 울코스 손세탁 권장"
+    size_tip = (data["size"] or "").strip() or "상품 정보를 기준으로 추천 사이즈를 확인해 주세요."
+    length_tip = """162-167cm에서는 모델핏을 참고해 주시고,
+<br> 다리 길이나 체형에 따라 다르지만,
+<br> 160cm이하에서는 모델의 핏보다 조금 길게
+<br> 연출됩니다."""
+    measurement = (data["measurement"] or "").strip() or "실측사이즈 정보를 입력해 주세요."
 
-    cleaned = result.replace(FIXED_HTML_HEAD, '').strip()
-    if '<div id="subsc">' in cleaned:
-        idx = cleaned.find('<div id="subsc">')
-        cleaned = cleaned[:idx] + FIXED_HTML_HEAD + "\n\n" + cleaned[idx:]
+    material_desc = f"{material} 소재로 제작되었습니다."
+
+    return f"""<div id="Subtap">
+	<div id="header2" role="banner">
+		<nav class="nav" role="navigation">
+
+			<ul class="nav__list">
+				<li>
+					<input id="group-1" type="checkbox" hidden="">
+					<label for="group-1" style="border-top-color: rgb(204, 204, 204); border-top-width: 1px; border-top-style: solid;">
+
+						<p class="fa fa-angle-right"></p>소재 정보</label>
+
+					<ul class="group-list">
+						<li>
+							<a href="#">
+
+								<h3>소재 : {material}</h3>
+
+								<p>
+									{material_desc}
+									<br>
+								</p>
+
+								<h3>세탁방법</h3>
+
+								<p>{washing}</p>
+							</a>
+						</li>
+					</ul>
+				</li>
+
+				<li>
+					<input id="group-2" type="checkbox" hidden="">
+					<label for="group-2">
+
+						<p class="fa fa-angle-right"></p>사이즈 정보</label>
+
+					<ul class="group-list gray">
+						<li>
+							<a href="#">
+
+								<h3>사이즈 TIP</h3>
+
+								<p>
+									{size_tip}
+								</p>
+
+								<h3>길이 TIP</h3>
+
+								<p>
+									{length_tip}
+								</p>
+							</a>
+						</li>
+					</ul>
+				</li>
+
+				<li>
+					<input id="group-3" type="checkbox" hidden="">
+					<label for="group-3">
+
+						<p class="fa fa-angle-right"></p>실측 사이즈</label>
+
+					<ul class="group-list">
+						<li>
+							<a href="#">
+
+								<p>{measurement}</p>
+
+							</a>
+						</li>
+					</ul>
+				</li>
+
+				<li>
+					<input id="group-5" type="checkbox" hidden="">
+					<label for="group-5"><span class="fa fa-angle-right"></span>
+						<a href="#crema-product-fit-1" style="padding: 0px; box-shadow:none; background:#f7f7f7;">실측사이즈 재는방법</a></label>
+				</li>
+			</ul>
+		</nav>
+	</div>
+</div>"""
+
+def extract_subsc_html(result: str, product_name: str) -> str:
+    m = re.search(r'<div id="subsc">[\s\S]*?</div>', result)
+    if m:
+        subsc = m.group(0)
     else:
-        cleaned = FIXED_HTML_HEAD + "\n\n" + cleaned
-    return cleaned
+        subsc = f"""<div id="subsc">
+  <h3>{product_name or "상품명"}</h3>
+  <p>
+    본문 내용을 생성하지 못했습니다.
+  </p>
+</div>"""
+    if '<h3>' not in subsc:
+        subsc = subsc.replace('<div id="subsc">', f'<div id="subsc">\n  <h3>{product_name or "상품명"}</h3>', 1)
+    return subsc
+
+def replace_source_section(result: str, source_block: str) -> str:
+    pattern = r'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n원고 양식\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[\s\S]*?━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n포인트 코멘트'
+    replacement = (
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "원고 양식\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{source_block}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "포인트 코멘트"
+    )
+    if re.search(pattern, result):
+        return re.sub(pattern, replacement, result, count=1)
+    return result + "\n\n" + source_block
 
 def result_to_docx_bytes(result_text: str) -> bytes:
     doc = Document()
@@ -247,32 +306,14 @@ with left:
     size = st.text_input("사이즈", placeholder="예: FREE / S(55)~XL(88)", key=f"size_{nonce}")
     measurement = st.text_input("실측사이즈", placeholder="예: 가슴둘레146 / 어깨-소매79.5 / 소매단26.5 / 총길이78", key=f"measurement_{nonce}")
     material = st.text_input("소재", placeholder="예: 면80+나일론20", key=f"material_{nonce}")
-    detail_tip = st.text_input(
-        "디테일 특징 (예:디자인, 절개라인, 부자재, 스펙상 특징 등)",
-        placeholder="예: 가슴 절개라인이 더해진 와이드 오버핏",
-        key=f"detail_tip_{nonce}"
-    )
+    detail_tip = st.text_input("디테일 특징 (예:디자인, 절개라인, 부자재, 스펙상 특징 등)", key=f"detail_tip_{nonce}")
 
 with right:
-    fit = st.text_input(
-        "핏/실루엣 (예:정핏,레귤러핏,오버핏 등/체형커버,다리길어보이는,날씬해보이는,어려보이는 등)",
-        placeholder="예: 상체 군살을 자연스럽게 커버하는 여유 있는 오버핏",
-        key=f"fit_{nonce}"
-    )
-    appeal_points = st.text_area(
-        "주요 어필 포인트 (예:고객 문제해결 포인트,원단 구김-탄력-내구성,체형커버,계절성,기능성,코디활용도 등)",
-        height=150,
-        placeholder="예: 구김에 강함 / 체형 구애 없는 오버핏 / 절개 디테일 / 간절기 활용도",
-        key=f"appeal_points_{nonce}"
-    )
+    fit = st.text_input("핏/실루엣 (예:정핏,레귤러핏,오버핏 등/체형커버, 다리길어보이는 등의 특장점)", key=f"fit_{nonce}")
+    appeal_points = st.text_area("주요 어필 포인트 (예:고객 문제해결 포인트,원단 구김-탄력-내구성,체형커버,계절성,기능성,코디활용도 등)", height=150, key=f"appeal_points_{nonce}")
     target = st.text_input("타겟", value="4050 여성", key=f"target_{nonce}")
     washing = st.text_input("세탁방법", value="드라이클리닝, 단독 울코스 손세탁 권장", key=f"washing_{nonce}")
-    etc = st.text_area(
-        "기타 (브랜드퀄리티,백화점납품상품,가격경쟁력,가성비,전문거래처 등)",
-        height=130,
-        placeholder="예: free사이즈 77까지 추천 / 162-167cm 모델핏 참고 / 가격 경쟁력 우수",
-        key=f"etc_{nonce}"
-    )
+    etc = st.text_area("기타 (브랜드퀄리티,백화점납품상품,가격경쟁력,가성비,전문거래처 등)", height=130, key=f"etc_{nonce}")
 
 st.subheader("이미지 업로드")
 uploaded_images = st.file_uploader("이미지", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True, key=f"uploaded_images_{nonce}")
@@ -302,12 +343,16 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
         response = client.chat.completions.create(
             model="gpt-4.1",
             messages=[
-                {"role": "system", "content": "고정 헤더 코드가 최상단에 먼저 오게 하고, subsc는 h3 상품명으로 시작하게 하며, 사이즈 팁 4개를 반드시 모두 작성한다. 동영상 문구는 쓰지 않는다."},
+                {"role": "system", "content": "subsc만 정확히 작성하고, 포인트 코멘트와 사이즈 팁은 채운다. 동영상 문구는 쓰지 않는다."},
                 {"role": "user", "content": user_content}
             ],
             temperature=0.2,
         )
-        result = force_fixed_html_order(response.choices[0].message.content, product_name)
+        raw_result = response.choices[0].message.content
+        subsc_html = extract_subsc_html(raw_result, product_name)
+        subtap_html = build_subtap_html(data)
+        source_block = FIXED_HTML_HEAD + "\n\n" + subsc_html + "\n\n" + subtap_html
+        result = replace_source_section(raw_result, source_block)
 
     st.text_area("결과", result, height=1100)
     docx_bytes = result_to_docx_bytes(result)
