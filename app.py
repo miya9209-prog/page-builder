@@ -268,7 +268,7 @@ with right:
     target = st.text_input("타겟", value="4050 여성", key=f"target_{nonce}")
     washing = st.text_input("세탁방법", value="드라이클리닝, 단독 울코스 손세탁 권장", key=f"washing_{nonce}")
     etc = st.text_area(
-        "기타 (가격 경쟁력, 가성비 등)",
+        "기타 (브랜드퀄리티,백화점납품상품,가격경쟁력,가성비,전문거래처 등)",
         height=130,
         placeholder="예: free사이즈 77까지 추천 / 162-167cm 모델핏 참고 / 가격 경쟁력 우수",
         key=f"etc_{nonce}"
