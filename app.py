@@ -395,6 +395,8 @@ def assemble_final_output(raw_result: str, source_block: str, data: Dict[str, st
     else:
         sec5 = extract_block(raw_result, "5. (핵심 어필 포인트)", ["---------------------------------", "텍스트 소스", "이런 분께 추천해요"]).replace("5. (핵심 어필 포인트)", "5. (핵심어필 포인트)")
     for sec in [sec2, sec3, sec4, sec5]:
+        if not sec or sec.strip() in ["2. 헤드라인", "3. (원단컷)", "4. (디테일컷)", "5. (핵심어필 포인트)"]:
+            sec = point_fallbacks.get(sec.strip(), sec)
         lines.append(sec)
         lines.append("")
     lines.append("---------------------------------")
@@ -462,23 +464,15 @@ def result_to_docx_bytes(result_text: str):
     style.font.name = "Dotum"
     style._element.rPr.rFonts.set(qn("w:eastAsia"), "돋움")
     style.font.size = Pt(10)
+    style.paragraph_format.space_before = Pt(0)
+    style.paragraph_format.space_after = Pt(0)
+    style.paragraph_format.line_spacing = 1.5
 
-    # 기본 문단 간격 제거
-    for style_name in ["Normal"]:
-        s = doc.styles[style_name]
-        s.paragraph_format.space_before = Pt(0)
-        s.paragraph_format.space_after = Pt(0)
-        s.paragraph_format.line_spacing = 1.5
-
-    # 기본 빈 문단 제거 성격으로 첫 문단 재사용
-    first = True
     for line in result_text.splitlines():
-        p = doc.paragraphs[0] if first else doc.add_paragraph()
-        first = False
+        p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(0)
         p.paragraph_format.line_spacing = 1.5
-        p.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
         run = p.add_run(line)
         run.font.name = "Dotum"
         run._element.rPr.rFonts.set(qn("w:eastAsia"), "돋움")
