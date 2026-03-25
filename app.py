@@ -9,6 +9,7 @@ from openai import OpenAI
 from docx import Document
 from docx.shared import Pt
 from docx.oxml.ns import qn
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 
 st.set_page_config(page_title="PAGE BUILDER", layout="wide")
 
@@ -91,10 +92,6 @@ MD원고는 반드시 아래 기존 구조를 그대로 따릅니다.
 - 각 블록은 제목 아래에 반드시 <h3>구조화된 타이틀</h3>을 한번 더 넣고, 그 아래 중앙정렬 HTML을 작성합니다.
 - 중앙정렬에서 보기 좋게 <br> 처리합니다.
 - FAQ는 4개를 채웁니다.
-
-포인트 원고 규칙
-- 2. 헤드라인, 3. (원단컷), 4. (디테일컷), 5. (핵심어필 포인트)는 제목만 두지 말고 반드시 실제 내용을 채웁니다.
-- 각 항목은 2~5줄 분량의 짧고 선명한 문장으로 작성합니다.
 
 사이즈 팁 규칙
 - 아래 4개를 모두 작성하고, 각 항목마다 실제 내용 2~3줄을 반드시 채웁니다.
@@ -359,59 +356,6 @@ def format_material_desc_for_top(material_desc: str):
         cleaned.append(line)
     return cleaned
 
-
-
-def build_point_fallbacks(data: Dict[str, str]):
-    product = data.get("display_name") or data.get("product_name") or "상품"
-    fit = (data.get("fit") or "").strip()
-    detail = (data.get("detail_tip") or "").strip()
-    material_desc = " / ".join([x.strip() for x in (data.get("material_desc") or "").splitlines() if x.strip()])
-    appeal = (data.get("appeal_points") or "").strip()
-
-    headline = "\n".join([
-        "2. 헤드라인",
-        f"{product}",
-        "편안함과 세련된 무드를",
-        "한 번에 담아낸 아이템"
-    ])
-
-    fabric = "\n".join([
-        "3. (원단컷)",
-        material_desc if material_desc else "가볍고 편안한 착용감을 전해주는 소재",
-        "데일리로 부담 없는 질감과",
-        "자연스럽게 흐르는 실루엣"
-    ])
-
-    detail_lines = ["4. (디테일컷)"]
-    if detail:
-        detail_lines.extend([detail, "실루엣을 더 깔끔하게 정리해 주는 디테일"])
-    else:
-        detail_lines.extend(["작은 차이가 완성도를 높이는 디테일", "입었을 때 더 정돈돼 보이는 포인트"])
-    detail_block = "\n".join(detail_lines)
-
-    appeal_lines = ["5. (핵심어필 포인트)"]
-    if fit:
-        appeal_lines.extend([fit, "편안함과 스타일을 함께 챙기기 좋은 아이템"])
-    elif appeal:
-        appeal_lines.extend([appeal, "매일 손이 가는 실용적인 매력"])
-    else:
-        appeal_lines.extend(["체형 부담을 덜고 활용도를 높여주는 아이템", "데일리부터 외출룩까지 자연스럽게 연결되는 무드"])
-    appeal_block = "\n".join(appeal_lines)
-
-    return {
-        "2. 헤드라인": headline,
-        "3. (원단컷)": fabric,
-        "4. (디테일컷)": detail_block,
-        "5. (핵심어필 포인트)": appeal_block,
-    }
-
-def ensure_point_block(block: str, title: str, fallback_map: dict):
-    stripped = block.strip()
-    rest = stripped.replace(title, "", 1).strip()
-    if stripped == title or not rest:
-        return fallback_map[title]
-    return block
-
 def assemble_final_output(raw_result: str, source_block: str, data: Dict[str, str]):
     lines = []
     lines.append(f"상품명 : {data['display_name']}")
@@ -438,16 +382,13 @@ def assemble_final_output(raw_result: str, source_block: str, data: Dict[str, st
     lines.append("")
     lines.append("1. 동영상")
     lines.append("")
-    point_fallbacks = build_point_fallbacks(data)
-    sec2 = ensure_point_block(extract_block(raw_result, "2. 헤드라인", ["3. (원단컷)"]), "2. 헤드라인", point_fallbacks)
-    sec3 = ensure_point_block(extract_block(raw_result, "3. (원단컷)", ["4. (디테일컷)"]), "3. (원단컷)", point_fallbacks)
+    sec2 = extract_block(raw_result, "2. 헤드라인", ["3. (원단컷)"])
+    sec3 = extract_block(raw_result, "3. (원단컷)", ["4. (디테일컷)"])
     sec4 = extract_block(raw_result, "4. (디테일컷)", ["5. (핵심어필 포인트)", "5. (핵심 어필 포인트)"]).replace("5. (핵심 어필 포인트)", "5. (핵심어필 포인트)")
-    sec4 = ensure_point_block(sec4, "4. (디테일컷)", point_fallbacks)
     if "5. (핵심어필 포인트)" in raw_result:
         sec5 = extract_block(raw_result, "5. (핵심어필 포인트)", ["---------------------------------", "텍스트 소스", "이런 분께 추천해요"])
     else:
         sec5 = extract_block(raw_result, "5. (핵심 어필 포인트)", ["---------------------------------", "텍스트 소스", "이런 분께 추천해요"]).replace("5. (핵심 어필 포인트)", "5. (핵심어필 포인트)")
-    sec5 = ensure_point_block(sec5, "5. (핵심어필 포인트)", point_fallbacks)
     for sec in [sec2, sec3, sec4, sec5]:
         lines.append(sec)
         lines.append("")
@@ -480,15 +421,31 @@ def assemble_final_output(raw_result: str, source_block: str, data: Dict[str, st
 def result_to_docx_bytes(result_text: str):
     doc = Document()
     style = doc.styles["Normal"]
-    style.font.name = "Malgun Gothic"
-    style._element.rPr.rFonts.set(qn("w:eastAsia"), "Malgun Gothic")
-    style.font.size = Pt(10.5)
+    style.font.name = "Dotum"
+    style._element.rPr.rFonts.set(qn("w:eastAsia"), "돋움")
+    style.font.size = Pt(10)
+
+    # 기본 문단 간격 제거
+    for style_name in ["Normal"]:
+        s = doc.styles[style_name]
+        s.paragraph_format.space_before = Pt(0)
+        s.paragraph_format.space_after = Pt(0)
+        s.paragraph_format.line_spacing = 1.5
+
+    # 기본 빈 문단 제거 성격으로 첫 문단 재사용
+    first = True
     for line in result_text.splitlines():
-        p = doc.add_paragraph()
+        p = doc.paragraphs[0] if first else doc.add_paragraph()
+        first = False
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(0)
+        p.paragraph_format.line_spacing = 1.5
+        p.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
         run = p.add_run(line)
-        run.font.name = "Malgun Gothic"
-        run._element.rPr.rFonts.set(qn("w:eastAsia"), "Malgun Gothic")
-        run.font.size = Pt(10.5)
+        run.font.name = "Dotum"
+        run._element.rPr.rFonts.set(qn("w:eastAsia"), "돋움")
+        run.font.size = Pt(10)
+
     bio = io.BytesIO()
     doc.save(bio)
     bio.seek(0)
@@ -605,7 +562,7 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
     with c1:
         st.download_button("TXT 다운로드", data=result, file_name=f"{(display_name or 'page_builder').replace(' ', '_')}_output.txt", mime="text/plain", use_container_width=True)
     with c2:
-        st.download_button("한글 호환 DOCX 다운로드", data=docx_bytes, file_name=f"{(display_name or 'page_builder').replace(' ', '_')}_output.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+        st.download_button("HWP 다운로드", data=docx_bytes, file_name=f"{(display_name or 'page_builder').replace(' ', '_')}_output.hwp", mime="application/x-hwp", use_container_width=True)
 
 st.markdown("---")
 st.markdown("© made by MISHARP, MIYAWA. All rights reserved.")
