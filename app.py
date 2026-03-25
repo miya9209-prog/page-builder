@@ -206,13 +206,18 @@ def build_user_prompt(data: Dict[str, str]) -> str:
 - 사이즈: {data['size']}
 - 실측사이즈: {" / ".join(data['measurement_lines'])}
 - 소재: {data['material']}
-- 소재설명: {data['material_desc']}
+- 소재설명 참고메모: {data['material_desc']}
 - 디테일특징: {data['detail_tip']}
 - 핏/실루엣: {data['fit']}
 - 주요 어필 포인트: {data['appeal_points']}
 - 타겟: {data['target']}
 - 세탁방법: {data['washing']}
 - 기타: {data['etc']}
+
+중요 추가 지시
+- 상단의 "소재설명 :" 항목은 입력자가 적은 문구를 그대로 복붙하지 않습니다.
+- 입력된 소재설명 참고메모를 바탕으로, AI가 자연스럽고 전문적인 문장으로 다시 정리해 2~4개의 리스팅 문장으로 작성합니다.
+- 문장 끝 표현이 반복되지 않게 하고, 쇼핑몰 실무자가 바로 쓸 수 있는 설명문으로 다듬습니다.
 """
 
 def format_measurement_lines(lines):
@@ -322,9 +327,9 @@ def extract_subsc_html(result: str, product_name: str):
 
 def ensure_text_source_h3(block: str, title: str):
     if "<h3>" in block:
-        return block
+        return block.replace("<br>","")
     if "<div" in block:
-        return block.replace("<div", f"<h3>{title}</h3>\n<div", 1)
+        return block.replace("<br>","").replace("<div", f"<h3>{title}</h3>\n<div", 1)
     return f"{title}\n<h3>{title}</h3>\n<div style=\"text-align:center;\">\n<br>\n</div>"
 
 def extract_block(raw: str, start_title: str, next_titles: list):
@@ -344,8 +349,8 @@ def extract_size_tip_block(raw_result: str, title: str, fallback_map: dict):
     block = extract_block(raw_result, title, ["ㅇ55 (90) 160cm 48kg", "ㅇ66 (95) 165cm 54kg", "ㅇ66반 (95) 164cm 58kg", "ㅇ77 (100) 163cm 61kg"])
     rest = block.replace(title, "").strip()
     if block.strip() == title.strip() or not rest:
-        return title + "\n" + fallback_map[title]
-    return block
+        return (title + "\n" + fallback_map[title]).replace("<br>","")
+    return block.replace("<br>","")
 
 def format_material_desc_for_top(material_desc: str):
     lines = [x.strip() for x in (material_desc or "").splitlines() if x.strip()]
@@ -418,6 +423,39 @@ def assemble_final_output(raw_result: str, source_block: str, data: Dict[str, st
         lines.append("")
     return "\n".join(lines).strip()
 
+
+def rewrite_material_desc(data: Dict[str, str]) -> str:
+    memo = (data.get("material_desc") or "").strip()
+    material = (data.get("material") or "").strip()
+    if not memo and not material:
+        return ""
+    prompt = f"""
+너는 여성의류 쇼핑몰 상세페이지의 소재설명 전문 에디터다.
+
+입력 정보
+- 소재: {material}
+- 참고메모: {memo}
+
+규칙
+- 참고메모를 그대로 복붙하지 말고 자연스럽고 전문적인 설명으로 다시 쓴다.
+- 2~4개의 짧은 리스팅 문장으로 작성한다.
+- 문장 끝 표현 반복을 줄인다.
+- 과장 없이 실무자가 바로 상세페이지에 넣을 수 있게 쓴다.
+- 결과는 문장만 줄바꿈으로 출력한다. 번호, 기호, 설명 금지.
+"""
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1",
+            messages=[{"role":"system","content":"사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},
+                {"role": "system", "content": "너는 소재설명 정리 전문가다."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception:
+        return memo
+
 def result_to_docx_bytes(result_text: str):
     doc = Document()
     style = doc.styles["Normal"]
@@ -467,7 +505,7 @@ with ncol2:
             with st.spinner("상품명을 생성 중입니다..."):
                 response = client.chat.completions.create(
                     model="gpt-4.1",
-                    messages=[{"role": "system", "content": NAME_PROMPT}, {"role": "user", "content": naming_input}],
+                    messages=[{"role":"system","content":"사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},{"role": "system", "content": NAME_PROMPT}, {"role": "user", "content": naming_input}],
                     temperature=0.5,
                 )
                 st.session_state.naming_result = response.choices[0].message.content.strip()
@@ -532,6 +570,7 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
         "target": target,
         "washing": washing,
     }
+    data["material_desc"] = rewrite_material_desc(data)
     prompt_text = build_user_prompt(data)
     if additional_request.strip():
         prompt_text += "\n\n추가/수정 요청사항\n" + additional_request + "\n"
@@ -543,8 +582,8 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
     with st.spinner("출력물을 생성 중입니다..."):
         response = client.chat.completions.create(
             model="gpt-4.1",
-            messages=[
-                {"role": "system", "content": "반드시 기존 MD원고 구조([쇼핑에 꼭 참고하세요] 포함)를 유지하고, 문장을 짧게 <br> 처리한다. 텍스트 소스는 각 블록에 h3 제목을 넣는다. 사이즈 팁 4개를 모두 채운다."},
+            messages=[{"role":"system","content":"사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},
+                {"role": "system", "content": "반드시 기존 MD원고 구조([쇼핑에 꼭 참고하세요] 포함)를 유지하고, 문장을 짧게 <br> 처리한다. 텍스트 소스는 각 블록에 h3 제목을 넣는다. 사이즈 팁 4개를 모두 채운다. 추가/수정 요청사항이 있으면 반드시 100% 반영한다. 무시하지 않는다."},
                 {"role": "user", "content": user_content}
             ],
             temperature=0.2,
