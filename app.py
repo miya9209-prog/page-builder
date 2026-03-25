@@ -7,7 +7,7 @@ from typing import List, Dict, Any
 import streamlit as st
 from openai import OpenAI
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Pt, RGBColor
 from docx.oxml.ns import qn
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 
@@ -88,10 +88,16 @@ MD원고는 반드시 아래 기존 구조를 그대로 따릅니다.
 - 상품명은 <strong>가 아니라 반드시 <h3> 태그로만 작성합니다.
 
 텍스트 소스 규칙
-- "이런 분께 추천해요", "(FAQ) 이 상품, 이게 궁금해요", "미리 입어본 착용 후기(피팅모델/스텝/MD의 리뷰)" 3개 블록 생성
-- 각 블록은 제목 아래에 반드시 <h3>구조화된 타이틀</h3>을 한번 더 넣고, 그 아래 중앙정렬 HTML을 작성합니다.
-- 중앙정렬에서 보기 좋게 <br> 처리합니다.
-- FAQ는 4개를 채웁니다.
+- 순서는 반드시 "이런 분께 추천해요" → "미리 입어 본 착용후기 (모델/스텝/MD리뷰)" → "(FAQ) 이 상품, 이게 궁금해요!" 순서입니다.
+- 각 섹션 제목은 중복 없이 제목 1개만 사용합니다.
+- "이런 분께 추천해요"는 <h3 style="margin-bottom:0;">이런 분께 추천해요</h3> 다음 줄부터 시작합니다.
+- 추천 문구 각 줄은 반드시 "⦁"를 붙이고, 기호 뒤에 띄움 없이 바로 문구를 씁니다.
+- "미리 입어 본 착용후기 (모델/스텝/MD리뷰)"는 <h3 style="margin-bottom:0;">미리 입어 본 착용후기 (모델/스텝/MD리뷰)</h3> 다음 줄부터 시작합니다.
+- 착용후기 각 문장은 따옴표로 감싸고, 줄바꿈이 되면 다음 줄 앞에는 &nbsp;&nbsp; 를 넣습니다.
+- "(FAQ) 이 상품, 이게 궁금해요!"는 <h3 style="margin-bottom:0;">(FAQ) 이 상품, 이게 궁금해요!</h3> 다음 줄부터 시작합니다.
+- FAQ는 4개를 채우고, 질문과 답 사이에는 <br><br>을 넣습니다.
+- FAQ 답변이 줄바꿈되면 다음 줄 앞에는 &nbsp;&nbsp;&nbsp;&nbsp; 를 넣습니다.
+- HTML 외의 설명 문구는 넣지 않습니다.
 
 사이즈 팁 규칙
 - 아래 4개를 모두 작성하고, 각 항목마다 실제 내용 2~3줄을 반드시 채웁니다.
@@ -325,12 +331,123 @@ def extract_subsc_html(result: str, product_name: str):
         subsc = subsc.replace('<div id="subsc">', f'<div id="subsc">\n  <h3>{product_name or "상품명"}</h3>', 1)
     return subsc
 
+
+def wrap_lines_with_indent(lines, indent):
+    if not lines:
+        return ""
+    out = [lines[0]]
+    for extra in lines[1:]:
+        out.append(f"{indent}{extra}")
+    return "<br>\n".join(out)
+
+def split_long_text(text, max_len=26):
+    text = re.sub(r"\s+", " ", (text or "").strip())
+    if len(text) <= max_len:
+        return [text]
+    words = text.split(" ")
+    lines = []
+    cur = ""
+    for w in words:
+        trial = (cur + " " + w).strip()
+        if cur and len(trial) > max_len:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = trial
+    if cur:
+        lines.append(cur)
+    return lines
+
+def format_text_source_block(block: str, kind: str):
+    raw = re.sub(r'<strong[^>]*>.*?</strong>', '', block, flags=re.I|re.S)
+    raw = re.sub(r'<h3[^>]*>.*?</h3>', '', raw, flags=re.I|re.S)
+    raw = raw.strip()
+
+    if kind == "recommend":
+        text_only = re.sub(r'<[^>]+>', '\n', raw)
+        items = []
+        for row in text_only.splitlines():
+            row = row.strip()
+            row = re.sub(r'^[⦁•\-]\s*', '', row)
+            if row and "이런 분께 추천해요" not in row:
+                items.append(row)
+        items = items[:4]
+        if not items:
+            items = [
+                "매일 부담 없이 입을 아이템을 찾는 분",
+                "체형 부담을 덜어주는 핏을 선호하는 분",
+                "단정하면서 편안한 분위기를 원하는 분",
+                "활용도 높은 기본 아이템이 필요한 분",
+            ]
+        body = "<br>\n".join([f"⦁{x}" for x in items]) + "<br><br><br>"
+        return '<h3 style="margin-bottom:0;">이런 분께 추천해요</h3>\n' + body
+
+    if kind == "review":
+        text_only = re.sub(r'<[^>]+>', '\n', raw)
+        rows = []
+        for row in text_only.splitlines():
+            row = row.strip().strip('"“”')
+            if row and "미리 입어" not in row:
+                rows.append(row)
+        rows = rows[:4]
+        if not rows:
+            rows = [
+                "피부에 닿는 촉감이 정말 부드러워요.",
+                "편안한 핏이라 데일리로 입기 좋아요.",
+                "입었을 때 실루엣이 깔끔하게 정리돼요.",
+                "활용도가 높아 자주 손이 가는 아이템이에요.",
+            ]
+        out = ['<h3 style="margin-bottom:0;">미리 입어 본 착용후기 (모델/스텝/MD리뷰)</h3>']
+        for row in rows:
+            wrapped = split_long_text(row, 26)
+            if len(wrapped) > 1:
+                out.append(f'"{wrapped[0]}<br>\n&nbsp;&nbsp;' + "<br>\n&nbsp;&nbsp;".join(wrapped[1:]) + '"<br>')
+            else:
+                out.append(f'"{wrapped[0]}"<br>')
+        out.append("<br><br>")
+        return "\n".join(out)
+
+    text_only = re.sub(r'<[^>]+>', '\n', raw)
+    qs, ans = [], []
+    for row in text_only.splitlines():
+        row = row.strip()
+        if not row or "FAQ" in row:
+            continue
+        if row.startswith("Q."):
+            qs.append(row[2:].strip())
+        elif row.startswith("A."):
+            ans.append(row[2:].strip())
+    pairs = list(zip(qs, ans))[:4]
+    if len(pairs) < 4:
+        fallback = [
+            ("사이즈는 어떻게 고르면 좋을까요?", "평소 착용하시는 사이즈 기준으로 보시면 되고, 상세 실측도 함께 확인해 주세요."),
+            ("비침이나 두께감은 어떤 편인가요?", "컬러와 소재 특성에 따라 차이가 있을 수 있어 상세 설명을 함께 참고해 주세요."),
+            ("세탁은 어떻게 해야 하나요?", "드라이클리닝, 단독 울세탁, 손세탁을 권장하며 건조기 사용은 피해 주세요."),
+            ("실제로 입었을 때 핏은 어떤가요?", "과하지 않게 자연스럽게 떨어지는 실루엣으로 데일리하게 활용하기 좋습니다."),
+        ]
+        pairs += fallback[len(pairs):4]
+    out = ['<h3 style="margin-bottom:0;">(FAQ) 이 상품, 이게 궁금해요!</h3>']
+    for q, a in pairs:
+        q_lines = split_long_text(q, 26)
+        a_lines = split_long_text(a, 26)
+        if len(q_lines) > 1:
+            out.append("Q. " + q_lines[0] + "<br>\n" + "&nbsp;&nbsp;&nbsp;&nbsp;".join([""] + q_lines[1:]))
+        else:
+            out.append("Q. " + q_lines[0])
+        if len(a_lines) > 1:
+            out.append("A. " + a_lines[0] + "<br>\n" + wrap_lines_with_indent(a_lines[1:], "&nbsp;&nbsp;&nbsp;&nbsp;"))
+        else:
+            out.append("A. " + a_lines[0])
+        out.append("<br>")
+    out.append("<br><br>")
+    return "\n".join(out)
+
 def ensure_text_source_h3(block: str, title: str):
-    if "<h3>" in block:
-        return block.replace("<br>", "").replace("<br>","")
-    if "<div" in block:
-        return block.replace("<br>","").replace("<div", f"<h3>{title}</h3>\n<div", 1)
-    return f"{title}\n<h3>{title}</h3>\n<div style=\"text-align:center;\">\n<br>\n</div>"
+    if "이런 분께 추천해요" in title:
+        return format_text_source_block(block, "recommend")
+    if "미리 입어" in title:
+        return format_text_source_block(block, "review")
+    return format_text_source_block(block, "faq")
 
 def extract_block(raw: str, start_title: str, next_titles: list):
     pattern = rf'{re.escape(start_title)}[\s\S]*?(?=' + '|'.join(re.escape(t) for t in next_titles) + r'|$)'
@@ -441,7 +558,7 @@ def assemble_final_output(raw_result: str, source_block: str, data: Dict[str, st
     lines.append("텍스트 소스")
     lines.append("---------------------------------")
     lines.append("")
-    source_titles = ["이런 분께 추천해요", "(FAQ) 이 상품, 이게 궁금해요", "미리 입어본 착용 후기(피팅모델/스텝/MD의 리뷰)"]
+    source_titles = ["이런 분께 추천해요", "미리 입어본 착용 후기(피팅모델/스텝/MD의 리뷰)", "(FAQ) 이 상품, 이게 궁금해요"]
     for i, title in enumerate(source_titles):
         next_titles = source_titles[i+1:] + ["----------------------------------", "MD원고(상품 설명 소스)", "-----------------", "사이즈 팁"]
         block = extract_block(raw_result, title, next_titles)
@@ -496,6 +613,7 @@ def rewrite_material_desc(data: Dict[str, str]) -> str:
     except Exception:
         return memo
 
+
 def result_to_docx_bytes(result_text: str):
     doc = Document()
     style = doc.styles["Normal"]
@@ -506,7 +624,16 @@ def result_to_docx_bytes(result_text: str):
     style.paragraph_format.space_after = Pt(0)
     style.paragraph_format.line_spacing = 1.5
 
+    current_section = ""
     for line in result_text.splitlines():
+        stripped = line.strip()
+        if stripped == "텍스트 소스":
+            current_section = "text_source"
+        elif stripped == "MD원고(상품 설명 소스)":
+            current_section = "md_source"
+        elif stripped == "사이즈 팁":
+            current_section = "size_tip"
+
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(0)
@@ -515,6 +642,16 @@ def result_to_docx_bytes(result_text: str):
         run.font.name = "Dotum"
         run._element.rPr.rFonts.set(qn("w:eastAsia"), "돋움")
         run.font.size = Pt(10)
+
+        is_html_source = (
+            current_section in ["text_source", "md_source"] and (
+                "<" in line or ">" in line or "&nbsp;" in line or
+                stripped.startswith("⦁") or stripped.startswith("Q.") or stripped.startswith("A.") or
+                stripped.startswith('"') or stripped.startswith("'")
+            )
+        )
+        if is_html_source:
+            run.font.color.rgb = RGBColor(255, 0, 0)
 
     bio = io.BytesIO()
     doc.save(bio)
