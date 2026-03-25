@@ -327,7 +327,7 @@ def extract_subsc_html(result: str, product_name: str):
 
 def ensure_text_source_h3(block: str, title: str):
     if "<h3>" in block:
-        return block.replace("<br>","")
+        return block.replace("<br>", "").replace("<br>","")
     if "<div" in block:
         return block.replace("<br>","").replace("<div", f"<h3>{title}</h3>\n<div", 1)
     return f"{title}\n<h3>{title}</h3>\n<div style=\"text-align:center;\">\n<br>\n</div>"
@@ -361,6 +361,43 @@ def format_material_desc_for_top(material_desc: str):
         cleaned.append(line)
     return cleaned
 
+
+def build_point_fallbacks(data: Dict[str, str]):
+    product = data.get("display_name") or data.get("product_name") or "상품"
+    fit = (data.get("fit") or "").strip()
+    detail = (data.get("detail_tip") or "").strip()
+    material_desc = " / ".join([x.strip() for x in (data.get("material_desc") or "").splitlines() if x.strip()])
+    appeal = (data.get("appeal_points") or "").strip()
+
+    headline = "\n".join([
+        "2. 헤드라인",
+        f"{product}",
+        "편안함과 세련된 무드를",
+        "한 번에 담아낸 아이템"
+    ])
+    fabric = "\n".join([
+        "3. (원단컷)",
+        material_desc if material_desc else "가볍고 편안한 착용감을 전해주는 소재",
+        "데일리로 부담 없는 질감과",
+        "자연스럽게 흐르는 실루엣"
+    ])
+    detail_block = "\n".join([
+        "4. (디테일컷)",
+        detail if detail else "작은 차이가 완성도를 높이는 디테일",
+        "입었을 때 더 정돈돼 보이는 포인트"
+    ])
+    appeal_block = "\n".join([
+        "5. (핵심어필 포인트)",
+        appeal if appeal else (fit if fit else "체형 부담을 덜고 활용도를 높여주는 아이템"),
+        "매일 손이 가는 실용적인 매력"
+    ])
+    return {
+        "2. 헤드라인": headline,
+        "3. (원단컷)": fabric,
+        "4. (디테일컷)": detail_block,
+        "5. (핵심어필 포인트)": appeal_block,
+    }
+
 def assemble_final_output(raw_result: str, source_block: str, data: Dict[str, str]):
     lines = []
     lines.append(f"상품명 : {data['display_name']}")
@@ -387,6 +424,7 @@ def assemble_final_output(raw_result: str, source_block: str, data: Dict[str, st
     lines.append("")
     lines.append("1. 동영상")
     lines.append("")
+    point_fallbacks = build_point_fallbacks(data)
     sec2 = extract_block(raw_result, "2. 헤드라인", ["3. (원단컷)"])
     sec3 = extract_block(raw_result, "3. (원단컷)", ["4. (디테일컷)"])
     sec4 = extract_block(raw_result, "4. (디테일컷)", ["5. (핵심어필 포인트)", "5. (핵심 어필 포인트)"]).replace("5. (핵심 어필 포인트)", "5. (핵심어필 포인트)")
