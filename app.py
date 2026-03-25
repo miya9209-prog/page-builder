@@ -429,26 +429,31 @@ def fallback_size_tips():
     }
 
 def extract_size_tip_block(raw_result: str, title: str, fallback_map: dict):
-    block = extract_block(raw_result, title, ["ㅇ55 (90) 160cm 48kg", "ㅇ66 (95) 165cm 54kg", "ㅇ66반 (95) 164cm 58kg", "ㅇ77 (100) 163cm 61kg"])
+    block = extract_block(
+        raw_result,
+        title,
+        ["ㅇ55 (90) 160cm 48kg", "ㅇ66 (95) 165cm 54kg", "ㅇ66반 (95) 164cm 58kg", "ㅇ77 (100) 163cm 61kg"]
+    )
     block = block.replace("<br>", "").replace("<br/>", "").replace("<br />", "")
-    rest = block.replace(title, "", 1).strip()
-    if block.strip() == title.strip() or not rest:
-        return title + "\n" + fallback_map[title]
     lines = [x.strip() for x in block.splitlines() if x.strip()]
-    if len(lines) <= 1:
+    if not lines or lines[0] != title:
         return title + "\n" + fallback_map[title]
-    body = " ".join(lines[1:])
-    body_lines = split_long_text(body, 34)
-    if len(body_lines) > 2:
-        body_lines = [body_lines[0], " ".join(body_lines[1:])]
-    return title + "\n" + "\n".join(body_lines)
 
-def extract_size_tip_block(raw_result: str, title: str, fallback_map: dict):
-    block = extract_block(raw_result, title, ["ㅇ55 (90) 160cm 48kg", "ㅇ66 (95) 165cm 54kg", "ㅇ66반 (95) 164cm 58kg", "ㅇ77 (100) 163cm 61kg"])
-    rest = block.replace(title, "").strip()
-    if block.strip() == title.strip() or not rest:
-        return (title + "\n" + fallback_map[title]).replace("<br>","")
-    return block.replace("<br>","")
+    body = " ".join(lines[1:]).strip()
+    if not body:
+        return title + "\n" + fallback_map[title]
+
+    # 2줄 형태로 정리
+    body_lines = split_long_text(body, 36)
+    if len(body_lines) == 1:
+        body_lines = [body_lines[0], ""]
+    elif len(body_lines) > 2:
+        body_lines = [body_lines[0], " ".join(body_lines[1:])]
+
+    second = body_lines[1].strip()
+    if second:
+        return title + "\n" + body_lines[0].strip() + "\n" + second
+    return title + "\n" + body_lines[0].strip()
 
 def format_material_desc_for_top(material_desc: str):
     lines = [x.strip() for x in (material_desc or "").splitlines() if x.strip()]
