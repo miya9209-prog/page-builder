@@ -941,20 +941,24 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
         user_content.append(file_to_content_item(img))
 
     with st.spinner("출력물을 생성 중입니다..."):
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[
-                {"role": "system", "content": "사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},
-                {"role": "system", "content": "반드시 기존 MD원고 구조([쇼핑에 꼭 참고하세요] 포함)를 유지하고, 문장을 짧게 처리한다. 텍스트 소스는 각 블록에 h3 제목을 넣는다. 사이즈 팁 4개를 모두 채운다. 입력칸 문구를 그대로 복붙하지 말고 자연스럽게 재작성한다. 헤드라인, 원단컷, 디테일컷, 핵심어필 포인트는 절대 빈칸으로 두지 않는다. 추가/수정 요청사항이 있으면 반드시 100% 반영한다. 무시하지 않는다."},
-                {"role": "user", "content": user_content}
-            ],
-            temperature=0.2,
-        )
-        raw_result = response.choices[0].message.content
-        subsc_html = extract_subsc_html(raw_result, display_name)
-        subtap_html = build_subtap_html(data)
-        source_block = FIXED_HTML_HEAD + "\n\n" + subsc_html + "\n\n" + subtap_html
-        result = assemble_final_output(raw_result, source_block, data)
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4.1-mini",
+                messages=[
+                    {"role": "system", "content": "사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},
+                    {"role": "system", "content": "반드시 기존 MD원고 구조([쇼핑에 꼭 참고하세요] 포함)를 유지하고, 문장을 짧게 처리한다. 텍스트 소스는 각 블록에 h3 제목을 넣는다. 사이즈 팁 4개를 모두 채운다. 입력칸 문구를 그대로 복붙하지 말고 자연스럽게 재작성한다. 헤드라인, 원단컷, 디테일컷, 핵심어필 포인트는 절대 빈칸으로 두지 않는다. 추가/수정 요청사항이 있으면 반드시 100% 반영한다. 무시하지 않는다."},
+                    {"role": "user", "content": user_content}
+                ],
+                temperature=0.2,
+            )
+            raw_result = response.choices[0].message.content
+            subsc_html = extract_subsc_html(raw_result, display_name)
+            subtap_html = build_subtap_html(data)
+            source_block = FIXED_HTML_HEAD + "\n\n" + subsc_html + "\n\n" + subtap_html
+            result = assemble_final_output(raw_result, source_block, data)
+        except Exception:
+            st.warning("요청이 일시적으로 많아 기본 작성안으로 출력합니다. 잠시 후 다시 시도하면 더 정교한 결과를 받을 수 있습니다.")
+            result = build_result_without_model(data)
 
     st.text_area("결과", result, height=1200)
     docx_bytes = result_to_docx_bytes(result)
