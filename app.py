@@ -957,8 +957,8 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
             source_block = FIXED_HTML_HEAD + "\n\n" + subsc_html + "\n\n" + subtap_html
             result = assemble_final_output(raw_result, source_block, data)
         except Exception:
-            st.warning("요청이 일시적으로 많아 기본 작성안으로 출력합니다. 잠시 후 다시 시도하면 더 정교한 결과를 받을 수 있습니다.")
-            result = build_result_without_model(data)
+            st.error("현재 요청이 많아 원고 생성이 일시적으로 제한되었습니다. 잠시 후 다시 시도해주세요.")
+            st.stop()
 
     st.text_area("결과", result, height=1200)
     docx_bytes = result_to_docx_bytes(result)
