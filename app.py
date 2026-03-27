@@ -20,6 +20,58 @@ if "naming_result" not in st.session_state:
 if "naming_input_value" not in st.session_state:
     st.session_state.naming_input_value = ""
 
+
+def generate_name_fallback(feature_text: str, max_items: int = 20) -> str:
+    text = re.sub(r"\s+", " ", (feature_text or "").strip())
+    raw_parts = [p.strip() for p in re.split(r"[,\n/]+", text) if p.strip()]
+    keywords = []
+    for p in raw_parts:
+        if p not in keywords:
+            keywords.append(p)
+    category_map = ["원피스", "자켓", "셔츠", "블라우스", "팬츠", "스커트", "니트", "가디건", "티셔츠", "점퍼", "베스트", "코트", "맨투맨"]
+    detected_cat = ""
+    for cat in category_map:
+        if cat in text:
+            detected_cat = cat
+            break
+    if not detected_cat:
+        detected_cat = "아이템"
+
+    mood_prefixes = ["소프트", "모던", "엘르", "루나", "에어리", "데일리", "멜로우", "시그니처", "프리미엄", "클래식"]
+    detail_words = []
+    for kw in keywords:
+        cleaned = re.sub(r"[^가-힣A-Za-z0-9 ]", "", kw).strip()
+        if cleaned and cleaned not in detail_words:
+            detail_words.append(cleaned)
+
+    candidates = []
+    for prefix in mood_prefixes:
+        base_parts = []
+        if detail_words:
+            base_parts.append(detail_words[0][:8].strip())
+        if len(detail_words) > 1:
+            base_parts.append(detail_words[1][:8].strip())
+        base = " ".join([prefix] + [x for x in base_parts if x] + [detected_cat]).strip()
+        base = re.sub(r"\s+", " ", base)
+        if len(base) <= 18 and base not in candidates:
+            candidates.append(base)
+
+    for kw in detail_words:
+        name = re.sub(r"\s+", " ", f"{kw} {detected_cat}").strip()
+        if len(name) <= 18 and name not in candidates:
+            candidates.append(name)
+
+    # pad safely
+    i = 1
+    while len(candidates) < max_items:
+        name = f"모던 {detected_cat} {i}"
+        if len(name) <= 18 and name not in candidates:
+            candidates.append(name)
+        i += 1
+
+    return "\n".join(candidates[:max_items])
+
+
 st.markdown("""
 <style>
 div[data-testid="stButton"] > button { min-height: 42px; }
@@ -82,7 +134,7 @@ MD원고는 반드시 아래 기존 구조를 그대로 따릅니다.
 8. 감성 마무리 문장
 
 중요 규칙
-- 각 문장은 한 줄이 너무 길지 않게 20~28자 안팎에서 자연스럽게 <br> 처리합니다.
+- 각 문장은 한 줄이 너무 길지 않게 20~28자 안팎에서 자연스럽게  처리합니다.
 - 오늘 테스트 출력물처럼 긴 문장을 한 줄에 길게 쓰지 않습니다.
 - 기존 스타일처럼 각 소제목을 대괄호 포함 구조화합니다.
 - [쇼핑에 꼭 참고하세요] 제목을 반드시 사용합니다.
@@ -93,7 +145,7 @@ MD원고는 반드시 아래 기존 구조를 그대로 따릅니다.
 텍스트 소스 규칙
 - "이런 분께 추천해요", "(FAQ) 이 상품, 이게 궁금해요", "미리 입어본 착용 후기(피팅모델/스텝/MD의 리뷰)" 3개 블록 생성
 - 각 블록은 제목 아래에 반드시 <h3>구조화된 타이틀</h3>을 한번 더 넣고, 그 아래 중앙정렬 HTML을 작성합니다.
-- 중앙정렬에서 보기 좋게 <br> 처리합니다.
+- 중앙정렬에서 보기 좋게  처리합니다.
 - FAQ는 4개를 채웁니다.
 
 사이즈 팁 규칙
@@ -229,13 +281,13 @@ def format_measurement_lines(lines):
     formatted = []
     for line in lines:
         line = re.sub(r"\s+단위:cm$", "", line).strip()
-        line = re.sub(r"\s+L\s+", "<br>L ", line)
-        line = re.sub(r"\s+M\s+", "<br>M ", line)
-        line = re.sub(r"\s+S\s+", "<br>S ", line)
-        line = re.sub(r"\s+XL\s+", "<br>XL ", line)
+        line = re.sub(r"\s+L\s+", "L ", line)
+        line = re.sub(r"\s+M\s+", "M ", line)
+        line = re.sub(r"\s+S\s+", "S ", line)
+        line = re.sub(r"\s+XL\s+", "XL ", line)
         line = re.sub(r"\s+", " ", line)
         formatted.append(line)
-    return "<br>".join(formatted) + " (단위: cm)"
+    return "".join(formatted) + " (단위: cm)"
 
 def build_subtap_html(data: Dict[str, str]):
     material_items = [x.strip() for x in (data["material"] or "").split("+") if x.strip()]
@@ -248,9 +300,9 @@ def build_subtap_html(data: Dict[str, str]):
 
     material_desc_lines = [x.strip() for x in (data["material_desc"] or "").splitlines() if x.strip()]
     if not material_desc_lines:
-        material_desc_html = "상품 정보를 기준으로 소재 특성을 확인해 주세요.<br>"
+        material_desc_html = "상품 정보를 기준으로 소재 특성을 확인해 주세요."
     else:
-        material_desc_html = "<br>\n\t\t\t\t\t\t\t\t\t".join(material_desc_lines) + "<br>"
+        material_desc_html = "\n\t\t\t\t\t\t\t\t\t".join(material_desc_lines) + ""
 
     return f"""<div id="Subtap">
 \t<div id="header2" role="banner">
@@ -284,9 +336,9 @@ def build_subtap_html(data: Dict[str, str]):
 \t\t\t\t\t\t\t\t<p>{size_tip}</p>
 \t\t\t\t\t\t\t\t<h3>길이 TIP</h3>
 \t\t\t\t\t\t\t\t<p>162-167cm에서는 모델핏을 참고해 주시고,
-<br> 다리 길이나 체형에 따라 다르지만,
-<br> 160cm이하에서는 모델의 핏보다 조금 길게
-<br> 연출됩니다.</p>
+ 다리 길이나 체형에 따라 다르지만,
+ 160cm이하에서는 모델의 핏보다 조금 길게
+ 연출됩니다.</p>
 \t\t\t\t\t\t\t</a>
 \t\t\t\t\t\t</li>
 \t\t\t\t\t</ul>
@@ -330,7 +382,7 @@ def extract_subsc_html(result: str, product_name: str):
 
 
 def normalize_sentence(text: str) -> str:
-    text = re.sub(r"\s+", " ", (text or "").replace("<br>", " ").replace("/", " ")).strip()
+    text = re.sub(r"\s+", " ", (text or "").replace("", " ").replace("/", " ")).strip()
     return text
 
 def stable_bullets_from_text(text: str, max_items=4):
@@ -382,7 +434,7 @@ def ensure_text_source_h3(block: str, title: str):
             "부드럽고 자연스러운 착용감을 원하는 분",
             "활용도 높은 기본 아이템이 필요한 분",
         ]
-        return '<h3 style="margin-bottom:0;">\n이런 분께 추천해요</h3>\n' + "<br>\n".join([f"⦁{x}" for x in items]) + "<br><br><br>"
+        return '<h3 style="margin-bottom:0;">\n이런 분께 추천해요</h3>\n' + "\n".join([f"⦁{x}" for x in items]) + ""
 
     if "미리 입어" in title:
         rows = []
@@ -400,10 +452,10 @@ def ensure_text_source_h3(block: str, title: str):
         for row in rows:
             lines = split_long_text(row, 28)
             if len(lines) > 1:
-                out.append(f'"{lines[0]}<br>\n&nbsp;&nbsp;' + "<br>\n&nbsp;&nbsp;".join(lines[1:]) + '"<br>')
+                out.append(f'"{lines[0]}\n&nbsp;&nbsp;' + "\n&nbsp;&nbsp;".join(lines[1:]) + '"')
             else:
-                out.append(f'"{lines[0]}"<br>')
-        out.append("<br><br><br>")
+                out.append(f'"{lines[0]}"')
+        out.append("")
         return "\n".join(out)
 
     qs, ans = [], []
@@ -428,14 +480,14 @@ def ensure_text_source_h3(block: str, title: str):
         ql = split_long_text(q, 26)
         al = split_long_text(a, 26)
         if len(ql) > 1:
-            out.append("Q. " + ql[0] + "<br>\n" + "&nbsp;&nbsp;&nbsp;&nbsp;".join([""] + ql[1:]))
+            out.append("Q. " + ql[0] + "\n" + "&nbsp;&nbsp;&nbsp;&nbsp;".join([""] + ql[1:]))
         else:
-            out.append("Q. " + ql[0] + "<br>")
+            out.append("Q. " + ql[0] + "")
         if len(al) > 1:
-            out.append("A. " + al[0] + "<br>\n" + "&nbsp;&nbsp;&nbsp;&nbsp;".join(al[1:]) + "<br><br>")
+            out.append("A. " + al[0] + "\n" + "&nbsp;&nbsp;&nbsp;&nbsp;".join(al[1:]) + "")
         else:
-            out.append("A. " + al[0] + "<br><br>")
-    out.append("<br><br><br>")
+            out.append("A. " + al[0] + "")
+    out.append("")
     return "\n".join(out)
 
 def extract_block(raw: str, start_title: str, next_titles: list):
@@ -457,7 +509,7 @@ def extract_size_tip_block(raw_result: str, title: str, fallback_map: dict):
         title,
         ["ㅇ55 (90) 160cm 48kg", "ㅇ66 (95) 165cm 54kg", "ㅇ66반 (95) 164cm 58kg", "ㅇ77 (100) 163cm 61kg"]
     )
-    block = block.replace("<br>", "").replace("<br/>", "").replace("<br />", "")
+    block = block.replace("", "").replace("", "").replace("", "")
     lines = [x.strip() for x in block.splitlines() if x.strip()]
     if not lines or lines[0] != title:
         return title + "\n" + fallback_map[title]
@@ -613,7 +665,7 @@ def rewrite_material_desc(data: Dict[str, str]) -> str:
 """
     try:
         response = client.chat.completions.create(
-            model="gpt-4.1",
+            model="gpt-4.1-mini",
             messages=[{"role":"system","content":"사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},
                 {"role": "system", "content": "너는 소재설명 정리 전문가다."},
                 {"role": "user", "content": prompt}
@@ -663,12 +715,19 @@ with ncol2:
     if st.button("네이밍 생성", use_container_width=True):
         if naming_input.strip():
             with st.spinner("상품명을 생성 중입니다..."):
-                response = client.chat.completions.create(
-                    model="gpt-4.1",
-                    messages=[{"role":"system","content":"사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},{"role": "system", "content": NAME_PROMPT}, {"role": "user", "content": naming_input}],
-                    temperature=0.5,
-                )
-                st.session_state.naming_result = response.choices[0].message.content.strip()
+                try:
+                    response = client.chat.completions.create(
+                        model="gpt-4.1-mini",
+                        messages=[
+                            {"role": "system", "content": NAME_PROMPT},
+                            {"role": "user", "content": naming_input}
+                        ],
+                        temperature=0.5,
+                    )
+                    st.session_state.naming_result = response.choices[0].message.content.strip()
+                except Exception:
+                    st.session_state.naming_result = generate_name_fallback(naming_input)
+                    st.info("네이밍 생성 요청이 일시적으로 많아 기본 추천안으로 출력했습니다.")
                 st.rerun()
         else:
             st.warning("상품 주요특징을 입력해 주세요.")
@@ -733,7 +792,8 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
     data["material_desc"] = rewrite_material_desc(data)
     prompt_text = build_user_prompt(data)
     if additional_request.strip():
-        prompt_text += "\n\n추가/수정 요청사항\n" + additional_request + "\n"
+        prompt_text += "
+추가/수정 요청사항\n" + additional_request + "\n"
 
     user_content: List[Dict[str, Any]] = [{"type": "text", "text": prompt_text}]
     for img in uploaded_images[:5] if uploaded_images else []:
@@ -743,7 +803,7 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
         response = client.chat.completions.create(
             model="gpt-4.1",
             messages=[{"role":"system","content":"사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},
-                {"role": "system", "content": "반드시 기존 MD원고 구조([쇼핑에 꼭 참고하세요] 포함)를 유지하고, 문장을 짧게 <br> 처리한다. 텍스트 소스는 각 블록에 h3 제목을 넣는다. 사이즈 팁 4개를 모두 채운다. 입력칸 문구를 그대로 복붙하지 말고 자연스럽게 재작성한다. 헤드라인, 원단컷, 디테일컷, 핵심어필 포인트는 절대 빈칸으로 두지 않는다. 추가/수정 요청사항이 있으면 반드시 100% 반영한다. 무시하지 않는다."},
+                {"role": "system", "content": "반드시 기존 MD원고 구조([쇼핑에 꼭 참고하세요] 포함)를 유지하고, 문장을 짧게  처리한다. 텍스트 소스는 각 블록에 h3 제목을 넣는다. 사이즈 팁 4개를 모두 채운다. 입력칸 문구를 그대로 복붙하지 말고 자연스럽게 재작성한다. 헤드라인, 원단컷, 디테일컷, 핵심어필 포인트는 절대 빈칸으로 두지 않는다. 추가/수정 요청사항이 있으면 반드시 100% 반영한다. 무시하지 않는다."},
                 {"role": "user", "content": user_content}
             ],
             temperature=0.2,
@@ -751,7 +811,9 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
         raw_result = response.choices[0].message.content
         subsc_html = extract_subsc_html(raw_result, display_name)
         subtap_html = build_subtap_html(data)
-        source_block = FIXED_HTML_HEAD + "\n\n" + subsc_html + "\n\n" + subtap_html
+        source_block = FIXED_HTML_HEAD + "
+" + subsc_html + "
+" + subtap_html
         result = assemble_final_output(raw_result, source_block, data)
 
     st.text_area("결과", result, height=1200)
