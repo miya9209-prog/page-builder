@@ -792,8 +792,8 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
     data["material_desc"] = rewrite_material_desc(data)
     prompt_text = build_user_prompt(data)
     if additional_request.strip():
-        prompt_text += "
-추가/수정 요청사항\n" + additional_request + "\n"
+        prompt_text += ""
+"추가/수정 요청사항\n" + additional_request + "\n"
 
     user_content: List[Dict[str, Any]] = [{"type": "text", "text": prompt_text}]
     for img in uploaded_images[:5] if uploaded_images else []:
