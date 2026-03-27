@@ -666,7 +666,7 @@ def rewrite_material_desc(data: Dict[str, str]) -> str:
     try:
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
-            messages=[{"role":"system","content":"사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},
+messages =[{"role":"system","content":"사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},
                 {"role": "system", "content": "너는 소재설명 정리 전문가다."},
                 {"role": "user", "content": prompt}
             ],
@@ -718,7 +718,7 @@ with ncol2:
                 try:
                     response = client.chat.completions.create(
                         model="gpt-4.1-mini",
-                        messages=[
+messages =[
                             {"role": "system", "content": NAME_PROMPT},
                             {"role": "user", "content": naming_input}
                         ],
@@ -792,8 +792,7 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
     data["material_desc"] = rewrite_material_desc(data)
     prompt_text = build_user_prompt(data)
     if additional_request.strip():
-        prompt_text += ""
-"추가/수정 요청사항\n" + additional_request + "\n"
+        prompt_text += "\n\n추가/수정 요청사항\n" + additional_request + "\n"
 
     user_content: List[Dict[str, Any]] = [{"type": "text", "text": prompt_text}]
     for img in uploaded_images[:5] if uploaded_images else []:
@@ -801,9 +800,10 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
 
     with st.spinner("출력물을 생성 중입니다..."):
         response = client.chat.completions.create(
-            model="gpt-4.1",
-            messages=[{"role":"system","content":"사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},
-                {"role": "system", "content": "반드시 기존 MD원고 구조([쇼핑에 꼭 참고하세요] 포함)를 유지하고, 문장을 짧게  처리한다. 텍스트 소스는 각 블록에 h3 제목을 넣는다. 사이즈 팁 4개를 모두 채운다. 입력칸 문구를 그대로 복붙하지 말고 자연스럽게 재작성한다. 헤드라인, 원단컷, 디테일컷, 핵심어필 포인트는 절대 빈칸으로 두지 않는다. 추가/수정 요청사항이 있으면 반드시 100% 반영한다. 무시하지 않는다."},
+            model="gpt-4.1-mini",
+            messages=[
+                {"role": "system", "content": "사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},
+                {"role": "system", "content": "반드시 기존 MD원고 구조([쇼핑에 꼭 참고하세요] 포함)를 유지하고, 문장을 짧게 처리한다. 텍스트 소스는 각 블록에 h3 제목을 넣는다. 사이즈 팁 4개를 모두 채운다. 입력칸 문구를 그대로 복붙하지 말고 자연스럽게 재작성한다. 헤드라인, 원단컷, 디테일컷, 핵심어필 포인트는 절대 빈칸으로 두지 않는다. 추가/수정 요청사항이 있으면 반드시 100% 반영한다. 무시하지 않는다."},
                 {"role": "user", "content": user_content}
             ],
             temperature=0.2,
@@ -811,9 +811,7 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
         raw_result = response.choices[0].message.content
         subsc_html = extract_subsc_html(raw_result, display_name)
         subtap_html = build_subtap_html(data)
-        source_block = FIXED_HTML_HEAD + "
-" + subsc_html + "
-" + subtap_html
+        source_block = FIXED_HTML_HEAD + "\n\n" + subsc_html + "\n\n" + subtap_html
         result = assemble_final_output(raw_result, source_block, data)
 
     st.text_area("결과", result, height=1200)
