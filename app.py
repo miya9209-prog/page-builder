@@ -21,6 +21,12 @@ if "naming_result" not in st.session_state:
     st.session_state.naming_result = ""
 if "naming_input_value" not in st.session_state:
     st.session_state.naming_input_value = ""
+if "result_text" not in st.session_state:
+    st.session_state.result_text = ""
+if "result_docx_bytes" not in st.session_state:
+    st.session_state.result_docx_bytes = b""
+if "result_filename_base" not in st.session_state:
+    st.session_state.result_filename_base = "page_builder"
 
 
 def chat_with_retry(*, model: str, messages, temperature: float = 0.2, max_retries: int = 2):
@@ -398,18 +404,21 @@ def format_material_desc_for_top(material_desc: str):
 
 
 def normalize_phrase(phrase: str) -> str:
-    p = re.sub(r'^[\-•⦁\s]+', '', (phrase or '').strip())
+    phrase = re.sub(r"<br\s*/?>", "\n", phrase or "", flags=re.I)
+    phrase = re.sub(r"<[^>]+>", " ", phrase)
+    p = re.sub(r'^[\-•⦁\s]+', '', phrase.strip())
     p = p.strip(' ,/;')
     if not p:
         return ''
     p = re.sub(r'\s+', ' ', p)
     return p
 
-
 def split_phrases(text: str):
     if not text:
         return []
-    temp = text.replace(' / ', '\n').replace('/', '\n').replace('·', '\n').replace('•', '\n').replace('⦁', '\n')
+    temp = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
+    temp = re.sub(r"<[^>]+>", " ", temp)
+    temp = temp.replace(' / ', '\n').replace('/', '\n').replace('·', '\n').replace('•', '\n').replace('⦁', '\n')
     temp = temp.replace(', ', '\n').replace(',', '\n')
     parts = [normalize_phrase(x) for x in temp.splitlines()]
     return [x for x in parts if x]
@@ -419,11 +428,12 @@ def phrase_to_sentence(phrase: str) -> str:
     p = normalize_phrase(phrase)
     if not p:
         return ''
+    p = p.replace('이너로이', '이너로').replace('오버핏/체형커버', '오버핏 실루엣')
     if re.search(r'[.!?다요]$', p):
         return p
     rules = [
-        (r'체형\s*커버', '체형을 자연스럽게 커버해 부담을 덜어줍니다.'),
-        (r'심플한\s*라인', '심플한 라인이 전체 실루엣을 더 깔끔하게 정리해 줍니다.'),
+        (r'체형\s*커버', '체형을 자연스럽게 커버해 부담 없이 입기 좋습니다.'),
+        (r'심플한\s*라인', '심플한 라인이 전체 실루엣을 더욱 깔끔하게 정리해 줍니다.'),
         (r'유러?피안\s*무드', '유러피안 무드가 은은하게 살아 있어 세련된 분위기를 완성합니다.'),
         (r'황금\s*단추', '황금 단추 디테일이 밋밋함 없이 고급스러운 포인트가 됩니다.'),
         (r'카라\s*디테일', '카라 디테일이 얼굴선을 더 단정하고 정돈돼 보이게 해줍니다.'),
@@ -432,6 +442,11 @@ def phrase_to_sentence(phrase: str) -> str:
         (r'편안함', '편안한 착용감으로 데일리 아이템으로 손이 자주 갑니다.'),
         (r'탄탄한\s*면\s*소재', '탄탄한 면 소재가 핏을 안정감 있게 잡아줍니다.'),
         (r'내구성', '내구성이 좋아 오래 입어도 흐트러짐이 적습니다.'),
+        (r'소매단\s*3?버튼|소매\s*3개\s*버튼|소매\s*3버튼', '소매단 버튼 디테일이 은은한 포인트가 되어 완성도를 높여줍니다.'),
+        (r'롤업', '롤업 연출이 가능해 스타일에 따라 다양한 분위기로 입기 좋습니다.'),
+        (r'파이핑', '파이핑 디테일이 더해져 한층 세련된 인상을 만들어줍니다.'),
+        (r'봄\s*가을.*단독', '봄과 가을에는 단독으로 활용하기 좋아 손이 자주 갑니다.'),
+        (r'겨울.*이너', '겨울에는 아우터 안 이너처럼 매치하기 좋아 활용도가 높습니다.'),
     ]
     for pattern, repl in rules:
         if re.search(pattern, p):
@@ -439,11 +454,10 @@ def phrase_to_sentence(phrase: str) -> str:
     if p.endswith('핏'):
         return f'{p}으로 입었을 때 전체 라인이 더 깔끔하게 정리됩니다.'
     if p.endswith('디테일'):
-        return f'{p}이 세련된 포인트가 되어 완성도를 높여줍니다.'
+        return f'{p}이 세련된 포인트가 되어 전체 분위기를 더 완성도 있게 만들어줍니다.'
     if p.endswith('소재'):
         return f'{p}로 편안하면서도 안정감 있는 착용감을 느끼실 수 있습니다.'
-    return f'{p}이 돋보여 전체적인 완성도를 높여줍니다.'
-
+    return f'{p}이 자연스럽게 어우러져 상품의 매력을 더해줍니다.'
 
 def format_point_block(title: str, content_lines: list[str]) -> str:
     lines = [title]
@@ -754,6 +768,9 @@ def reset_all():
     st.session_state.reset_nonce += 1
     st.session_state.naming_result = ""
     st.session_state.naming_input_value = ""
+    st.session_state.result_text = ""
+    st.session_state.result_docx_bytes = b""
+    st.session_state.result_filename_base = "page_builder"
 
 st.markdown("---")
 st.subheader("상품 네이밍")
@@ -862,6 +879,9 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
             subtap_html = build_subtap_html(data)
             source_block = FIXED_HTML_HEAD + "\n\n" + subsc_html + "\n\n" + subtap_html
             result = assemble_final_output(raw_result, source_block, data)
+            st.session_state.result_text = result
+            st.session_state.result_docx_bytes = result_to_docx_bytes(result)
+            st.session_state.result_filename_base = (display_name or "page_builder").replace(" ", "_")
         except RateLimitError:
             st.error("현재 OpenAI 요청이 일시적으로 몰려 원고 생성을 완료하지 못했습니다. 결괏값 품질을 유지하기 위해 자동 대체문구는 넣지 않았습니다. 잠시 후 다시 시도해 주세요.")
             st.stop()
@@ -869,14 +889,14 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
             st.error(f"원고 생성 중 오류가 발생했습니다: {e}")
             st.stop()
 
-    st.text_area("결과", result, height=1200)
-    docx_bytes = result_to_docx_bytes(result)
 
+if st.session_state.result_text:
+    st.text_area("결과", st.session_state.result_text, height=1200)
     c1, c2 = st.columns(2)
     with c1:
-        st.download_button("TXT 다운로드", data=result, file_name=f"{(display_name or 'page_builder').replace(' ', '_')}_output.txt", mime="text/plain", use_container_width=True)
+        st.download_button("TXT 다운로드", data=st.session_state.result_text, file_name=f"{st.session_state.result_filename_base}_output.txt", mime="text/plain", use_container_width=True)
     with c2:
-        st.download_button("HWP 다운로드", data=docx_bytes, file_name=f"{(display_name or 'page_builder').replace(' ', '_')}_output.hwp", mime="application/x-hwp", use_container_width=True)
+        st.download_button("HWP 다운로드", data=st.session_state.result_docx_bytes, file_name=f"{st.session_state.result_filename_base}_output.hwp", mime="application/x-hwp", use_container_width=True)
 
 st.markdown("---")
 st.markdown("© made by MISHARP, MIYAWA. All rights reserved.")
