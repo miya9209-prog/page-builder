@@ -598,7 +598,7 @@ def build_point_fallbacks(data: Dict[str, str]):
     detail_phrases = split_phrases(data.get('detail_tip') or '')
     appeal_phrases = split_phrases(data.get('appeal_points') or '')
 
-    headline = "2. 헤드라인
+    headline = "2. 헤드라인\n"
 "
         '2. 헤드라인',
         product,
