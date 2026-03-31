@@ -600,11 +600,6 @@ def build_point_fallbacks(data: Dict[str, str]):
 
     headline = "2. 헤드라인\n"
 
-        '2. 헤드라인',
-        product,
-        '편안함과 세련된 무드를 함께 담아낸 아이템',
-        '데일리부터 외출룩까지 자연스럽게 이어지는 분위기'
-    ])
     fabric_lines = [sentence_to_point_phrase(x) for x in (material_lines[:4] if material_lines else ['가볍고 편안한 착용감.', '데일리로 부담 없는 질감.'])]
     if fit:
         fabric_lines.append(sentence_to_point_phrase(f'{fit}으로 자연스럽게 흐르는 실루엣.'))
