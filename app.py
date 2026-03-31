@@ -599,7 +599,7 @@ def build_point_fallbacks(data: Dict[str, str]):
     appeal_phrases = split_phrases(data.get('appeal_points') or '')
 
     headline = "2. 헤드라인\n"
-"
+
         '2. 헤드라인',
         product,
         '편안함과 세련된 무드를 함께 담아낸 아이템',
