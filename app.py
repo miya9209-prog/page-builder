@@ -1,3 +1,60 @@
+
+def _upgrade_point_quality(line: str) -> str:
+    s = (line or "").strip()
+    if not s:
+        return ""
+    rules = [
+        ("혼방", "울·텐셀·레이온·나일론 혼방의 부드럽고 고급스러운 텍스처"),
+        ("광택", "은은한 광택감과 고급스러운 표면 질감"),
+        ("구김", "구김이 적어 관리가 편한 실용적 소재"),
+        ("두께", "가볍고 부담 없는 두께감으로 자연스럽게 흐르는 실루엣"),
+        ("타이", "탈부착 가능한 타이 디테일로 다양한 스타일 연출"),
+        ("소매", "볼륨감 있는 소매로 팔 라인을 자연스럽게 커버"),
+        ("절개", "앞 절개 라인으로 슬림해 보이는 시각적 효과"),
+        ("군살", "군살을 자연스럽게 커버하는 세련된 실루엣 핏"),
+        ("활용", "오피스·하객·데일리까지 확장 가능한 스타일링 활용도"),
+    ]
+    for k, v in rules:
+        if k in s:
+            return v + "."
+    # fallback keep but end with period
+    s = re.sub(r'\s+', ' ', s).strip(" .")
+    return (s + ".") if s and not s.endswith(".") else s
+
+def _clean_point_sections(text: str) -> str:
+    # clear headline content
+    text = re.sub(r'(2\. 헤드라인[^\n]*\n)([\s\S]*?)(?=\n3\. \(원단컷\))', r'\1\n', text)
+
+    def _proc_block(text, start, end):
+        pattern = rf'({re.escape(start)}\n)([\s\S]*?)(?=\n{re.escape(end)})'
+        def repl(m):
+            lines = [l.strip() for l in m.group(2).splitlines() if l.strip()]
+            out = []
+            for l in lines:
+                nl = _upgrade_point_quality(l)
+                if nl:
+                    out.append(nl)
+            out = out[:3]
+            return m.group(1) + "\n".join(out) + "\n"
+        return re.sub(pattern, repl, text)
+
+    text = _proc_block(text, '3. (원단컷)', '4. (디테일컷)')
+    text = _proc_block(text, '4. (디테일컷)', '5. (핵심어필 포인트)')
+
+    # last block until divider/end
+    pattern_last = r'(5\. \(핵심어필 포인트\)\n)([\s\S]*?)(?=\n-+|\n---------------------------------|$)'
+    def repl_last(m):
+        lines = [l.strip() for l in m.group(2).splitlines() if l.strip()]
+        out = []
+        for l in lines:
+            nl = _upgrade_point_quality(l)
+            if nl:
+                out.append(nl)
+        out = out[:3]
+        return m.group(1) + "\n".join(out) + "\n"
+    text = re.sub(pattern_last, repl_last, text)
+    return text
+
 import base64
 import time
 from openai import RateLimitError
@@ -23,7 +80,7 @@ if "naming_input_value" not in st.session_state:
     st.session_state.naming_input_value = ""
 
 if "generated_result" not in st.session_state:
-    st.session_state.generated_result = ""
+    st.session_state.generated_result = _clean_point_sections("")
 if "generated_docx" not in st.session_state:
     st.session_state.generated_docx = b""
 if "generated_filename_base" not in st.session_state:
@@ -384,54 +441,46 @@ def sentence_to_point_phrase(text: str) -> str:
     if not s:
         return ''
     s = re.sub(r'<br\s*/?>', ' ', s)
-    s = re.sub(r'\s+', ' ', s).strip(' .')
-
-    s = s.replace('전체적인 완성도를 높여줍니다', '')
-    s = s.replace('타이이', '타이').replace('소매이', '소매').replace('오피스이', '오피스')
-    s = s.replace('군살커버', '군살 커버')
-
-    exact = {
-        '울, 텐셀, 레이온, 나일론이 조화롭게 혼방되어 부드럽고 편안한 착용감을 선사합니다': '부드럽고 쾌적한 혼방 텍스처.',
-        '울, 텐셀, 레이온, 나일론이 조화롭게 혼방되어 부드럽고 쾌적한 착용감을 선사합니다': '부드럽고 쾌적한 혼방 텍스처.',
-        '은은한 광택이 더해져 세련된 무드를 연출하며, 구김이 적어 관리가 편리합니다': '은은한 광택감과 구김이 적은 관리 편의성.',
-        '은은한 광택이 더해져 세련된 무드를 연출하며, 구김이 적어 관리가 용이합니다': '은은한 광택감과 구김이 적은 관리 편의성.',
-        '가볍고 부담 없는 두께로 여리한 실루엣이 자연스럽게 표현됩니다': '가볍고 부담 없는 두께의 여리한 실루엣.',
-        '가볍고 부담 없는 두께로 여리여리한 실루엣이 자연스럽게 표현됩니다': '가볍고 부담 없는 두께의 여리한 실루엣.',
-        '탈부착 가능한 타이': '탈부착 가능한 타이 디테일.',
-        '볼륨 소매': '볼륨감 있는 소매 실루엣.',
-        '앞 절개라인': '앞 절개 라인 포인트.',
-        '오피스·하객·데일리룩 활용': '오피스·하객·데일리룩 활용성.',
-    }
-    if s in exact:
-        return exact[s]
-
-    if '타이' in s and '탈부착' in s:
-        return '탈부착 가능한 타이 디테일.'
-    if '볼륨' in s and '소매' in s:
-        return '볼륨감 있는 소매 실루엣.'
-    if '절개' in s:
-        return '앞 절개 라인 포인트.'
-    if '구김' in s:
-        return '구김이 적은 관리 편의성.'
-    if '군살' in s or '커버' in s:
-        return '군살 커버에 효과적인 세련된 핏.'
-    if '오피스' in s or '하객' in s or '데일리' in s:
-        return '오피스·하객·데일리룩 활용성.'
-    if '광택' in s:
-        return '은은한 광택감과 세련된 무드.'
-    if '혼방' in s or '텍스처' in s or '촉감' in s:
-        return '부드럽고 쾌적한 혼방 텍스처.'
-    if '두께' in s or '실루엣' in s:
-        return '가볍고 부담 없는 두께의 여리한 실루엣.'
-
-    # safe fallback: only return if already noun-like
-    s = re.sub(r'\b(합니다|됩니다|있습니다|좋습니다|가능합니다|선사합니다|연출합니다|표현됩니다)\b', '', s)
-    s = re.sub(r'\s+', ' ', s).strip(' .,')
-    if len(s) < 5:
+    s = re.sub(r'\s+', ' ', s).strip()
+    replacements = [
+        ('제작되었습니다.', '제작.'),
+        ('제작되었습니다', '제작'),
+        ('느껴집니다.', ''),
+        ('느껴집니다', ''),
+        ('돋보입니다.', ''),
+        ('돋보입니다', ''),
+        ('좋습니다.', ''),
+        ('좋습니다', ''),
+        ('가능합니다.', '가능.'),
+        ('가능합니다', '가능'),
+        ('높습니다.', '높은 활용도.'),
+        ('높습니다', '높은 활용도'),
+        ('전해줍니다.', ''),
+        ('전해줍니다', ''),
+        ('완성해줍니다.', ''),
+        ('완성해줍니다', ''),
+        ('살아 있습니다.', ''),
+        ('살아 있습니다', ''),
+        ('연출합니다.', '연출.'),
+        ('연출합니다', '연출'),
+        ('연출해줍니다.', '연출.'),
+        ('연출해줍니다', '연출'),
+        ('보여줍니다.', ''),
+        ('보여줍니다', ''),
+        ('입니다.', ''),
+        ('입니다', ''),
+        ('합니다.', ''),
+        ('합니다', ''),
+    ]
+    for a, b in replacements:
+        s = s.replace(a, b)
+    s = s.strip(' .')
+    if not s:
         return ''
-    if not s.endswith('.'):
+    if not s.endswith(('.', '!', '?')):
         s += '.'
     return s
+
 
 def build_relevant_faqs(data: Dict[str, str]) -> list[tuple[str, str]]:
     faqs = []
@@ -478,10 +527,10 @@ def build_shopping_block(lines_in: list[str], data: Dict[str, str]) -> str:
             lines.append(f'▪ {size}')
         color = normalize_phrase(data.get('color') or '')
         if any(x in color for x in ['아이보리', '크림', '화이트']):
-            lines.append('▪ 아이보리는 밝은 컬러 특성상 스킨톤 이너와 함께 착용하시면 더욱 안정감 있게 입으실 수 있습니다.')
+            lines.extend(['▪ 아이보리는 밝은 컬러 특성상', '스킨톤 이너와 함께 착용하시면', '더욱 안정감 있게 입으실 수 있습니다.'])
         detail = normalize_phrase(data.get('detail_tip') or '')
         if '타이' in detail or '스트랩' in detail or '탈부착' in detail:
-            lines.append('▪ 스카프 스트랩은 탈부착이 가능해 취향에 따라 자유롭게 연출하실 수 있습니다.')
+            lines.extend(['▪ 스카프 스트랩은 탈부착이 가능해', '취향에 따라 자유롭게 연출하실 수 있습니다.'])
     else:
         for idx, s in enumerate(src):
             if idx == 0 and not s.startswith(('▪', '⦁')):
@@ -572,7 +621,31 @@ def phrase_to_sentence(phrase: str) -> str:
     p = normalize_phrase(phrase)
     if not p:
         return ''
-    return p.replace('타이이', '타이').replace('소매이', '소매').replace('오피스이', '오피스')
+    if re.search(r'[.!?다요]$', p):
+        return p
+    rules = [
+        (r'체형\s*커버', '체형을 자연스럽게 커버해 부담을 덜어줍니다.'),
+        (r'심플한\s*라인', '심플한 라인이 전체 실루엣을 더 깔끔하게 정리해 줍니다.'),
+        (r'유러?피안\s*무드', '유러피안 무드가 은은하게 살아 있어 세련된 분위기를 완성합니다.'),
+        (r'황금\s*단추', '황금 단추 디테일이 밋밋함 없이 고급스러운 포인트가 됩니다.'),
+        (r'카라\s*디테일', '카라 디테일이 얼굴선을 더 단정하고 정돈돼 보이게 해줍니다.'),
+        (r'원단\s*구김\s*없', '구김이 적은 원단이라 하루 종일 깔끔한 인상을 유지하기 좋습니다.'),
+        (r'탄력', '탄력이 좋아 움직임이 많은 날에도 편안하게 입기 좋습니다.'),
+        (r'편안함', '편안한 착용감으로 데일리 아이템으로 손이 자주 갑니다.'),
+        (r'탄탄한\s*면\s*소재', '탄탄한 면 소재가 핏을 안정감 있게 잡아줍니다.'),
+        (r'내구성', '내구성이 좋아 오래 입어도 흐트러짐이 적습니다.'),
+    ]
+    for pattern, repl in rules:
+        if re.search(pattern, p):
+            return repl
+    if p.endswith('핏'):
+        return f'{p}으로 입었을 때 전체 라인이 더 깔끔하게 정리됩니다.'
+    if p.endswith('디테일'):
+        return f'{p}이 세련된 포인트가 되어 완성도를 높여줍니다.'
+    if p.endswith('소재'):
+        return f'{p}로 편안하면서도 안정감 있는 착용감을 느끼실 수 있습니다.'
+    return f'{p}이 돋보여 전체적인 완성도를 높여줍니다.'
+
 
 def format_point_block(title: str, content_lines: list[str]) -> str:
     lines = [title]
@@ -584,30 +657,37 @@ def format_point_block(title: str, content_lines: list[str]) -> str:
 
 
 def build_point_fallbacks(data: Dict[str, str]):
+    product = data.get('display_name') or data.get('product_name') or '상품'
+    fit = (data.get('fit') or '').strip()
     material_lines = format_material_desc_for_top(data.get('material_desc') or '')
     detail_phrases = split_phrases(data.get('detail_tip') or '')
     appeal_phrases = split_phrases(data.get('appeal_points') or '')
 
-    headline = '2. 헤드라인\n'
-    fabric_lines = normalize_fabric_lines("\n".join(material_lines), data)
-    detail_lines = normalize_detail_or_appeal_lines("", data.get('detail_tip') or '', [
-        '탈부착 가능한 타이 디테일.',
-        '볼륨감 있는 소매 실루엣.',
-        '앞 절개 라인 포인트.',
+    headline = '\n'.join([
+        '2. 헤드라인',
+        product,
+        '편안함과 세련된 무드를 함께 담아낸 아이템',
+        '데일리부터 외출룩까지 자연스럽게 이어지는 분위기'
     ])
-    appeal_seed = data.get('appeal_points') or data.get('fit') or ''
-    appeal_lines = normalize_detail_or_appeal_lines("", appeal_seed, [
-        '구김이 적은 관리 편의성.',
-        '군살 커버에 효과적인 세련된 핏.',
-        '오피스·하객·데일리룩 활용성.',
-    ])
-
+    fabric_lines = [sentence_to_point_phrase(x) for x in (material_lines[:4] if material_lines else ['가볍고 편안한 착용감.', '데일리로 부담 없는 질감.'])]
+    if fit:
+        fabric_lines.append(sentence_to_point_phrase(f'{fit}으로 자연스럽게 흐르는 실루엣.'))
+    fabric = format_point_block('3. (원단컷)', [x for x in fabric_lines if x][:4])
+    detail_lines = [sentence_to_point_phrase(phrase_to_sentence(x)) for x in detail_phrases[:3]] or ['소매와 절개, 부자재가 살아 있는 디테일 포인트.', '입었을 때 더 정돈돼 보이는 실루엣.']
+    if len(detail_lines) < 2:
+        detail_lines.append('입었을 때 더 정돈돼 보이는 실루엣.')
+    detail_block = format_point_block('4. (디테일컷)', detail_lines)
+    appeal_lines = [sentence_to_point_phrase(phrase_to_sentence(x)) for x in appeal_phrases[:3]] or [sentence_to_point_phrase(phrase_to_sentence(fit)) if fit else '체형 부담을 덜어 주는 실용적인 매력.', '매일 손이 가는 편안한 아이템.']
+    if len(appeal_lines) < 2:
+        appeal_lines.append('매일 손이 가는 편안한 아이템.')
+    appeal_block = format_point_block('5. (핵심어필 포인트)', appeal_lines)
     return {
         '2. 헤드라인': headline,
-        '3. (원단컷)': format_point_block('3. (원단컷)', fabric_lines[:3]),
-        '4. (디테일컷)': format_point_block('4. (디테일컷)', detail_lines[:3]),
-        '5. (핵심어필 포인트)': format_point_block('5. (핵심어필 포인트)', appeal_lines[:3]),
+        '3. (원단컷)': fabric,
+        '4. (디테일컷)': detail_block,
+        '5. (핵심어필 포인트)': appeal_block,
     }
+
 
 def get_block_body(block: str, title: str) -> str:
     return re.sub(r'^' + re.escape(title) + r'\s*', '', (block or '').strip())
@@ -617,44 +697,31 @@ def normalize_fabric_lines(block_body: str, data: Dict[str, str]) -> list[str]:
     parts = [normalize_phrase(x) for x in re.split(r'<br\s*/?>|\n+', block_body) if normalize_phrase(x)]
     if len(parts) < 2 or any(len(x) <= 8 for x in parts):
         parts = format_material_desc_for_top(data.get('material_desc') or '')
-
     lines = []
     for p in parts:
+        if p.endswith(('과', '와', '및')):
+            continue
         phrase = sentence_to_point_phrase(p)
         if phrase:
             lines.append(phrase)
+    fit = (data.get('fit') or '').strip()
+    if fit:
+        fit_line = sentence_to_point_phrase(f'{fit}으로 자연스럽게 흐르는 실루엣.')
+        if fit_line and all(fit_line != x for x in lines):
+            lines.append(fit_line)
+    return lines[:4]
 
-    deduped = []
-    seen = set()
-    for line in lines:
-        key = line.rstrip('.')
-        if key not in seen:
-            seen.add(key)
-            deduped.append(line)
-    return deduped[:3]
 
 def normalize_detail_or_appeal_lines(block_body: str, input_text: str, fallback_lines: list[str]) -> list[str]:
     phrases = [normalize_phrase(x) for x in re.split(r'<br\s*/?>|\n+|/|,', block_body) if normalize_phrase(x)]
     if len(phrases) <= 1:
         phrases = split_phrases(input_text) or phrases
-
-    lines = []
-    for p in phrases[:6]:
-        phrase = sentence_to_point_phrase(p)
-        if phrase:
-            lines.append(phrase)
-
+    lines = [sentence_to_point_phrase(phrase_to_sentence(x)) for x in phrases[:4]]
+    lines = [x for x in lines if x]
     if not lines:
         lines = fallback_lines
+    return lines[:4]
 
-    deduped = []
-    seen = set()
-    for line in lines:
-        key = line.rstrip('.')
-        if key not in seen:
-            seen.add(key)
-            deduped.append(line if line.endswith('.') else line + '.')
-    return deduped[:3]
 
 def extract_text_source_section(raw_result: str) -> str:
     m = re.search(r'---------------------------------\s*텍스트 소스\s*---------------------------------([\s\S]*?)----------------------------------\s*MD원고', raw_result)
@@ -759,7 +826,7 @@ def assemble_final_output(raw_result: str, source_block: str, data: Dict[str, st
     lines.append('')
 
     point_fallbacks = build_point_fallbacks(data)
-    sec2 = '2. 헤드라인\n'
+    sec2 = extract_block(raw_result, '2. 헤드라인', ['3. (원단컷)'])
     sec3 = extract_block(raw_result, '3. (원단컷)', ['4. (디테일컷)'])
     sec4 = extract_block(raw_result, '4. (디테일컷)', ['5. (핵심어필 포인트)', '5. (핵심 어필 포인트)']).replace('5. (핵심 어필 포인트)', '5. (핵심어필 포인트)')
     if '5. (핵심어필 포인트)' in raw_result:
@@ -866,7 +933,7 @@ def reset_all():
     st.session_state.reset_nonce += 1
     st.session_state.naming_result = ""
     st.session_state.naming_input_value = ""
-    st.session_state.generated_result = ""
+    st.session_state.generated_result = _clean_point_sections("")
     st.session_state.generated_docx = b""
     st.session_state.generated_filename_base = "page_builder"
 
@@ -979,7 +1046,7 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
             source_block = FIXED_HTML_HEAD + "\n\n" + subsc_html + "\n\n" + subtap_html
             result = assemble_final_output(raw_result, source_block, data)
             result = result.replace(build_shopping_block([], data), build_shopping_block(shopping_lines, data))
-            st.session_state.generated_result = result
+            st.session_state.generated_result = _clean_point_sections(result)
             st.session_state.generated_docx = result_to_docx_bytes(result)
             st.session_state.generated_filename_base = (display_name or 'page_builder').replace(' ', '_')
         except RateLimitError:
