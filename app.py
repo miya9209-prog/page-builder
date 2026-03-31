@@ -21,12 +21,10 @@ if "naming_result" not in st.session_state:
     st.session_state.naming_result = ""
 if "naming_input_value" not in st.session_state:
     st.session_state.naming_input_value = ""
-if "result_text" not in st.session_state:
-    st.session_state.result_text = ""
-if "result_docx_bytes" not in st.session_state:
-    st.session_state.result_docx_bytes = b""
-if "result_filename_base" not in st.session_state:
-    st.session_state.result_filename_base = "page_builder"
+if "generated_result" not in st.session_state:
+    st.session_state.generated_result = ""
+if "generated_filename" not in st.session_state:
+    st.session_state.generated_filename = "page_builder"
 
 
 def chat_with_retry(*, model: str, messages, temperature: float = 0.2, max_retries: int = 2):
@@ -345,47 +343,70 @@ def build_subtap_html(data: Dict[str, str]):
 \t</div>
 </div>"""
 
+def normalize_subsc_html(subsc: str, product_name: str) -> str:
+    subsc = (subsc or '').strip()
+    if not subsc:
+        return f"""<div id="subsc">
+	<h3>{product_name or "상품명"}</h3>
+	<p>
+		<br> 본문 내용을 생성하지 못했습니다.<br>
+	</p>
+</div>"""
+    if '<h3>' not in subsc:
+        subsc = subsc.replace('<div id="subsc">', f'<div id="subsc">\n	<h3>{product_name or "상품명"}</h3>', 1)
+
+    title_match = re.search(r'<h3>.*?</h3>', subsc, flags=re.S)
+    title_html = title_match.group(0).strip() if title_match else f'<h3>{product_name or "상품명"}</h3>'
+    body = re.sub(r'^.*?</h3>', '', subsc, count=1, flags=re.S)
+    body = re.sub(r'</div>\s*$', '', body, flags=re.S).strip()
+    body = body.replace('<p>', '').replace('</p>', '')
+    body = re.sub(r'\s*<div[^>]*>\s*', '\n', body, flags=re.S)
+    body = re.sub(r'\s*</div>\s*', '\n', body, flags=re.S)
+    body = re.sub(r'(?i)<br\s*/?>', '<br>', body)
+    body = body.replace('&nbsp;', ' ')
+    body = re.sub(r'\\s*\n\\s*', '\\n', body)
+
+    lines = []
+    for raw in body.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith('<strong'):
+            if not line.endswith('<br>'):
+                line += '<br>'
+            lines.append(line)
+            continue
+        if '<br>' in line:
+            parts = [x.strip() for x in line.split('<br>') if x.strip()]
+            for part in parts:
+                if part.startswith('<strong'):
+                    if not part.endswith('<br>'):
+                        part += '<br>'
+                    lines.append(part)
+                else:
+                    lines.append(f'<br> {part}')
+            continue
+        lines.append(f'<br> {line}')
+
+    normalized = '\n'.join(lines).strip()
+    normalized = re.sub(r'(<strong[^>]*>.*?</strong>)<br>\n?<br>', r'\1<br>', normalized, flags=re.S)
+    return f'<div id="subsc">\n	{title_html}\n	<p>\n		{normalized}\n	</p>\n</div>'
+
+
 def extract_subsc_html(result: str, product_name: str):
     m = re.search(r'<div id="subsc">[\s\S]*?</div>', result)
     if m:
         subsc = m.group(0)
     else:
         subsc = f"""<div id="subsc">
-  <h3>{product_name or "상품명"}</h3>
-  <p>
-    본문 내용을 생성하지 못했습니다.
-  </p>
+	<h3>{product_name or "상품명"}</h3>
+	<p>
+		<br> 본문 내용을 생성하지 못했습니다.<br>
+	</p>
 </div>"""
     if '<h3>' not in subsc:
-        subsc = subsc.replace('<div id="subsc">', f'<div id="subsc">\n  <h3>{product_name or "상품명"}</h3>', 1)
-    return subsc
-
-
-def normalize_subsc_html(subsc: str, product_name: str) -> str:
-    subsc = (subsc or '').replace('\r\n', '\n')
-    if '<div id="subsc">' not in subsc:
-        subsc = f'<div id="subsc">\n<h3>{product_name or "상품명"}</h3>\n{subsc}\n</div>'
-    if '<h3>' not in subsc:
-        subsc = subsc.replace('<div id="subsc">', f'<div id="subsc">\n  <h3>{product_name or "상품명"}</h3>', 1)
-    subsc = re.sub(r' {2,}\n', '<br>\n', subsc)
-    lines = subsc.split('\n')
-    out = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            out.append(line)
-            continue
-        if stripped.startswith('<'):
-            out.append(line)
-            continue
-        if '<br>' in line:
-            out.append(line)
-            continue
-        out.append(line.rstrip() + '<br>')
-    subsc = '\n'.join(out)
-    subsc = re.sub(r'(<strong[^>]*>[^<]+</strong>)(?!<br>)', r'\1<br>', subsc)
-    subsc = re.sub(r'<br>\s*</div>', '\n</div>', subsc)
-    return subsc
+        subsc = subsc.replace('<div id="subsc">', f'<div id="subsc">\n	<h3>{product_name or "상품명"}</h3>', 1)
+    return normalize_subsc_html(subsc, product_name)
 
 
 def ensure_text_source_h3(block: str, title: str):
@@ -431,21 +452,18 @@ def format_material_desc_for_top(material_desc: str):
 
 
 def normalize_phrase(phrase: str) -> str:
-    phrase = re.sub(r"<br\s*/?>", "\n", phrase or "", flags=re.I)
-    phrase = re.sub(r"<[^>]+>", " ", phrase)
-    p = re.sub(r'^[\-•⦁\s]+', '', phrase.strip())
+    p = re.sub(r'^[\-•⦁\s]+', '', (phrase or '').strip())
     p = p.strip(' ,/;')
     if not p:
         return ''
     p = re.sub(r'\s+', ' ', p)
     return p
 
+
 def split_phrases(text: str):
     if not text:
         return []
-    temp = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
-    temp = re.sub(r"<[^>]+>", " ", temp)
-    temp = temp.replace(' / ', '\n').replace('/', '\n').replace('·', '\n').replace('•', '\n').replace('⦁', '\n')
+    temp = text.replace(' / ', '\n').replace('/', '\n').replace('·', '\n').replace('•', '\n').replace('⦁', '\n')
     temp = temp.replace(', ', '\n').replace(',', '\n')
     parts = [normalize_phrase(x) for x in temp.splitlines()]
     return [x for x in parts if x]
@@ -455,44 +473,31 @@ def phrase_to_sentence(phrase: str) -> str:
     p = normalize_phrase(phrase)
     if not p:
         return ''
-    p = p.replace('이너로이', '이너로').replace('오버핏/체형커버', '오버핏 실루엣')
-    p = re.sub(r'\s+', ' ', p).strip()
-    if re.search(r'[.!?]$|니다\.$|습니다\.$|해요\.$', p):
+    if re.search(r'[.!?다요]$', p):
         return p
-
-    direct_rules = [
-        (r'체형\s*커버', '체형을 자연스럽게 커버해 부담 없이 입기 좋습니다.'),
-        (r'심플한\s*라인', '심플한 라인이 전체 실루엣을 더욱 깔끔하게 정리해 줍니다.'),
+    rules = [
+        (r'체형\s*커버', '체형을 자연스럽게 커버해 부담을 덜어줍니다.'),
+        (r'심플한\s*라인', '심플한 라인이 전체 실루엣을 더 깔끔하게 정리해 줍니다.'),
         (r'유러?피안\s*무드', '유러피안 무드가 은은하게 살아 있어 세련된 분위기를 완성합니다.'),
         (r'황금\s*단추', '황금 단추 디테일이 밋밋함 없이 고급스러운 포인트가 됩니다.'),
         (r'카라\s*디테일', '카라 디테일이 얼굴선을 더 단정하고 정돈돼 보이게 해줍니다.'),
-        (r'원단\s*구김\s*없|구김\s*없', '구김이 적은 원단이라 하루 종일 깔끔한 인상을 유지하기 좋습니다.'),
+        (r'원단\s*구김\s*없', '구김이 적은 원단이라 하루 종일 깔끔한 인상을 유지하기 좋습니다.'),
         (r'탄력', '탄력이 좋아 움직임이 많은 날에도 편안하게 입기 좋습니다.'),
-        (r'편안함|편안한\s*착용감', '편안한 착용감으로 데일리 아이템으로 손이 자주 갑니다.'),
+        (r'편안함', '편안한 착용감으로 데일리 아이템으로 손이 자주 갑니다.'),
         (r'탄탄한\s*면\s*소재', '탄탄한 면 소재가 핏을 안정감 있게 잡아줍니다.'),
         (r'내구성', '내구성이 좋아 오래 입어도 흐트러짐이 적습니다.'),
-        (r'소매단\s*3?버튼|소매\s*3개\s*버튼|소매\s*3버튼', '소매단 3버튼 디테일이 은은한 포인트가 되어 멋스럽게 완성됩니다.'),
-        (r'롤업', '롤업 연출이 가능해 스타일에 따라 다양한 분위기로 입기 좋습니다.'),
-        (r'파이핑', '파이핑 디테일이 더해져 한층 세련된 인상을 만들어줍니다.'),
-        (r'봄\s*가을.*단독', '봄과 가을에는 단독으로 활용하기 좋아 데일리로 손이 자주 갑니다.'),
-        (r'겨울.*이너', '겨울에는 코트나 패딩 안 이너로 매치하기 좋아 활용도가 높습니다.'),
-        (r'가볍고\s*부드러운\s*촉감', '가볍고 부드러운 촉감이 느껴져 편안하게 착용하기 좋습니다.'),
     ]
-    for pattern, repl in direct_rules:
+    for pattern, repl in rules:
         if re.search(pattern, p):
             return repl
-
+    if p.endswith('핏'):
+        return f'{p}으로 입었을 때 전체 라인이 더 깔끔하게 정리됩니다.'
     if p.endswith('디테일'):
-        return f'{p}이 세련된 포인트가 되어 전체 분위기를 더 완성도 있게 만들어줍니다.'
+        return f'{p}이 세련된 포인트가 되어 완성도를 높여줍니다.'
     if p.endswith('소재'):
-        return f'{p}라 편안하면서도 안정감 있는 착용감을 느끼실 수 있습니다.'
-    if p.endswith('핏') or '실루엣' in p:
-        return f'{p}이 자연스럽게 떨어져 전체 라인을 더 깔끔하게 정리해 줍니다.'
-    if len(p) <= 8:
-        return f'{p}이 은은한 포인트가 되어 전체 분위기를 더 살려줍니다.'
-    if '혼방' in p:
-        return f'{p}으로 편안함과 실용성을 함께 느끼실 수 있습니다.'
-    return f'{p}이 자연스럽게 어우러져 상품의 매력을 더해줍니다.'
+        return f'{p}로 편안하면서도 안정감 있는 착용감을 느끼실 수 있습니다.'
+    return f'{p}이 돋보여 전체적인 완성도를 높여줍니다.'
+
 
 def format_point_block(title: str, content_lines: list[str]) -> str:
     lines = [title]
@@ -543,69 +548,50 @@ def get_block_body(block: str, title: str) -> str:
 def normalize_fabric_lines(block_body: str, data: Dict[str, str]) -> list[str]:
     parts = split_phrases(block_body)
     material_fallback = format_material_desc_for_top(data.get('material_desc') or '')
-
-    def looks_low_quality(items: list[str]) -> bool:
-        if not items:
-            return True
-        bad = 0
-        for item in items:
-            s = normalize_phrase(item)
-            if len(s) <= 8:
-                bad += 1
-            if s.endswith(('입니다', '으로입니다', '혼방으로입니다')):
-                bad += 1
-            if re.fullmatch(r'(폴리|폴리에스터|나일론|레이온|면|스판)(.*)?', s):
-                bad += 1
-        return bad >= max(1, len(items) // 2)
-
-    if len(parts) < 2 or looks_low_quality(parts):
-        parts = material_fallback or parts
-
+    bad_short = {'폴리', '폴리에스터', '나일론', '레이온', '스판', '혼방'}
+    if len(parts) < 2 or any(p in bad_short or len(p) <= 7 for p in parts[:3]):
+        parts = material_fallback
     lines = []
     for p in parts:
-        s = normalize_phrase(p)
-        if not s:
+        p = normalize_phrase(p)
+        if not p or p.endswith(('과', '와', '및')):
             continue
-        if re.search(r'[.!?]$|니다\.$|습니다\.$|해요\.$', s):
-            sent = s
-        else:
-            sent = phrase_to_sentence(s)
-            if sent.endswith('전체 분위기를 더 살려줍니다.') and any(k in s for k in ['폴리', '나일론', '레이온', '면', '스판']):
-                continue
+        if len(p) <= 7 and not re.search(r'[.!?다요]$', p):
+            continue
+        sent = p
+        if not re.search(r'[.!?다요]$', sent):
+            if any(k in sent for k in ['활용', '느껴', '돋보', '연출', '편안', '쾌적', '매끄럽']):
+                sent += '습니다.' if not sent.endswith('니다') else ''
+            else:
+                sent += '입니다.' if not sent.endswith('니다') else ''
         lines.append(sent)
+    if not lines:
+        lines = material_fallback or ['부드럽고 편안한 착용감을 전해주는 소재입니다.', '데일리로 부담 없는 질감이 돋보입니다.']
+    fit = normalize_phrase(data.get('fit') or '')
+    if fit and '오버핏/체형커버' not in fit:
+        fit_line = f'{fit}으로 자연스럽게 흐르는 실루엣이 돋보입니다.' if not re.search(r'[.!?다요]$', fit) else fit
+        if all(fit_line != x for x in lines):
+            lines.append(fit_line)
+    return lines[:4]
 
-    fit = normalize_phrase((data.get('fit') or '').strip())
-    if fit and all(fit not in x for x in lines):
-        lines.append(f'{fit}으로 자연스럽게 흐르는 실루엣이 돋보입니다.' if not re.search(r'[.!?]$|니다\.$', fit) else fit)
-
-    dedup = []
-    seen = set()
-    for line in lines:
-        key = re.sub(r'\s+', ' ', line)
-        if key not in seen:
-            dedup.append(line)
-            seen.add(key)
-    return dedup[:4]
 
 def normalize_detail_or_appeal_lines(block_body: str, input_text: str, fallback_lines: list[str]) -> list[str]:
     phrases = split_phrases(block_body)
     raw_join = ' '.join(phrases)
     if len(phrases) <= 1 or (raw_join and ',' in block_body) or ('/' in block_body) or '<br>' in block_body:
         phrases = split_phrases(input_text) or phrases
-
-    lines = [phrase_to_sentence(x) for x in phrases[:4]]
-    lines = [x for x in lines if x]
+    lines = []
+    seen = set()
+    for phrase in phrases[:4]:
+        sent = phrase_to_sentence(phrase)
+        key = re.sub(r'\s+', '', sent)
+        if sent and key not in seen and '전체적인완성도를높여줍니다' not in key:
+            seen.add(key)
+            lines.append(sent)
     if not lines:
         lines = fallback_lines
+    return lines[:4]
 
-    dedup = []
-    seen = set()
-    for line in lines:
-        normalized = re.sub(r'\s+', ' ', line).strip()
-        if normalized not in seen:
-            dedup.append(normalized)
-            seen.add(normalized)
-    return dedup[:4]
 
 def extract_text_source_section(raw_result: str) -> str:
     m = re.search(r'---------------------------------\s*텍스트 소스\s*---------------------------------([\s\S]*?)----------------------------------\s*MD원고', raw_result)
@@ -840,9 +826,8 @@ def reset_all():
     st.session_state.reset_nonce += 1
     st.session_state.naming_result = ""
     st.session_state.naming_input_value = ""
-    st.session_state.result_text = ""
-    st.session_state.result_docx_bytes = b""
-    st.session_state.result_filename_base = "page_builder"
+    st.session_state.generated_result = ""
+    st.session_state.generated_filename = "page_builder"
 
 st.markdown("---")
 st.subheader("상품 네이밍")
@@ -947,13 +932,10 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
                 max_retries=2,
             )
             raw_result = response.choices[0].message.content
-            subsc_html = normalize_subsc_html(extract_subsc_html(raw_result, display_name), display_name)
+            subsc_html = extract_subsc_html(raw_result, display_name)
             subtap_html = build_subtap_html(data)
             source_block = FIXED_HTML_HEAD + "\n\n" + subsc_html + "\n\n" + subtap_html
             result = assemble_final_output(raw_result, source_block, data)
-            st.session_state.result_text = result
-            st.session_state.result_docx_bytes = result_to_docx_bytes(result)
-            st.session_state.result_filename_base = (display_name or "page_builder").replace(" ", "_")
         except RateLimitError:
             st.error("현재 OpenAI 요청이 일시적으로 몰려 원고 생성을 완료하지 못했습니다. 결괏값 품질을 유지하기 위해 자동 대체문구는 넣지 않았습니다. 잠시 후 다시 시도해 주세요.")
             st.stop()
@@ -961,14 +943,15 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
             st.error(f"원고 생성 중 오류가 발생했습니다: {e}")
             st.stop()
 
+if st.session_state.generated_result:
+    st.text_area("결과", st.session_state.generated_result, height=1200)
+    docx_bytes = result_to_docx_bytes(st.session_state.generated_result)
 
-if st.session_state.result_text:
-    st.text_area("결과", st.session_state.result_text, height=1200)
     c1, c2 = st.columns(2)
     with c1:
-        st.download_button("TXT 다운로드", data=st.session_state.result_text, file_name=f"{st.session_state.result_filename_base}_output.txt", mime="text/plain", use_container_width=True)
+        st.download_button("TXT 다운로드", data=st.session_state.generated_result, file_name=f"{st.session_state.generated_filename}_output.txt", mime="text/plain", use_container_width=True)
     with c2:
-        st.download_button("HWP 다운로드", data=st.session_state.result_docx_bytes, file_name=f"{st.session_state.result_filename_base}_output.hwp", mime="application/x-hwp", use_container_width=True)
+        st.download_button("HWP 다운로드", data=docx_bytes, file_name=f"{st.session_state.generated_filename}_output.hwp", mime="application/x-hwp", use_container_width=True)
 
 st.markdown("---")
 st.markdown("© made by MISHARP, MIYAWA. All rights reserved.")
