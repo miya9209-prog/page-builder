@@ -114,7 +114,7 @@ MD원고는 반드시 아래 기존 구조를 그대로 따릅니다.
 - 추천/후기/쇼핑에 꼭 참고하세요 블록의 본문은 <p><span style="font-size:14px; line-height:1.8;"> ... </span></p> 구조를 사용합니다.
 - FAQ 블록의 본문은 <p><span style="font-size:14px; line-height:1.4;"> ... </span></p> 구조를 사용합니다.
 - 추천 블록은 각 줄 앞에 ▪ 또는 ⦁를 붙인 실무용 문장으로 작성합니다.
-- 착용후기 블록은 각 문장을 따옴표로 감싸고, 문장이 두 줄이 되면 둘째 줄은 &nbsp; 또는 &nbsp;&nbsp; 로 들여맞춤합니다.
+- 착용후기 블록은 각 문장을 따옴표로 감싸고 자연스럽게 줄바꿈합니다.
 - FAQ는 반드시 4개를 작성하되, 상품 정보와 직접 관련된 질문만 작성합니다. 상품과 무관한 질문은 금지합니다.
 - 
 사이즈 팁 규칙
@@ -263,6 +263,89 @@ def format_measurement_lines(lines):
         formatted.append(line)
     return "<br>".join(formatted) + " (단위: cm)"
 
+
+
+    def _clean_sentence(s: str) -> str:
+        s = re.sub(r'<br\s*/?>', ' ', (s or '')).strip()
+        s = re.sub(r'\s+', ' ', s).strip(' .')
+        if not s:
+            return ''
+        # remove noun-list style remnants
+        s = s.replace('군살커버', '군살을 자연스럽게 커버')
+        s = s.replace('오피스룩, 하객룩, 데일리까지 폭넓은 활용도', '오피스룩, 하객룩, 데일리룩까지 폭넓게 활용할 수 있습니다')
+        if re.search(r'(합니다|입니다|됩니다|좋습니다|가능합니다|추천드립니다|어울립니다|높습니다|갑니다|됩니다)$', s):
+            return s + '.'
+        return s + '.'
+
+    def build_md_subsc_from_data(data: Dict[str, str]) -> str:
+        name = data.get('display_name') or '상품명'
+        size = normalize_phrase(data.get('size') or 'FREE 사이즈로 77까지 추천드립니다.')
+        material_lines = format_material_desc_for_top(data.get('material_desc') or '')
+        detail = normalize_phrase(data.get('detail_tip') or '')
+        fit = normalize_phrase(data.get('fit') or '')
+        appeal = normalize_phrase(data.get('appeal_points') or '')
+        color = normalize_phrase(data.get('color') or '')
+
+        reason_lines = [
+            '브이넥과 탈부착 타이 디테일이 세련된 무드를 완성해주는 블라우스입니다',
+            '군살을 자연스럽게 커버해주는 실루엣으로 부담 없이 입기 좋습니다',
+            '오피스룩, 하객룩, 데일리룩까지 폭넓게 활용할 수 있어 추천드립니다',
+        ]
+        if fit:
+            reason_lines[1] = _clean_sentence(fit.replace('핏', ' 핏으로 체형을 자연스럽게 커버해줍니다'))
+        if appeal:
+            reason_lines[2] = _clean_sentence(appeal.replace('활용도', '활용도가 높아 추천드립니다'))
+
+        if material_lines:
+            material_block_lines = []
+            for x in material_lines[:3]:
+                material_block_lines.append(_clean_sentence(x))
+        else:
+            material_block_lines = [
+                '부드럽고 편안한 착용감을 선사하는 혼방 소재입니다.',
+                '은은한 광택감이 더해져 고급스러운 무드를 연출합니다.',
+                '가볍고 부담 없는 두께감으로 데일리하게 입기 좋습니다.',
+            ]
+
+        fit_lines = [
+            size.replace('추천드립니다.', '추천드리며 편안하게 착용하실 수 있습니다.').replace('추천드립니다', '추천드리며 편안하게 착용하실 수 있습니다.'),
+            '가슴과 암홀, 소매에 여유가 있어 체형에 구애 없이 입기 좋습니다.',
+            '볼륨감 있는 소매와 앞 절개라인이 상체를 한층 더 슬림하게 정리해줍니다.',
+        ]
+        if '아이보리' in color:
+            fit_lines.append('아이보리 컬러는 스킨톤 이너와 함께 착용하시면 더욱 안정감 있게 입으실 수 있습니다.')
+
+        wear_lines = [
+            '중요한 미팅이나 오피스룩으로 세련된 분위기를 연출하기 좋습니다.',
+            '격식 있는 하객룩과 모임룩으로도 부담 없이 활용할 수 있습니다.',
+            '데님, 슬랙스, 스커트와 자연스럽게 어울려 데일리룩으로도 손이 자주 갑니다.',
+        ]
+
+        closing_lines = [
+            '세련된 무드와 실용성을 모두 갖춘 블라우스입니다.',
+            f'{name}로 매일의 스타일에 특별함을 더해보세요.',
+        ]
+
+        def block(title: str, items: list[str]) -> str:
+            out = [f'<strong style="font-weight:700 !important;">[{title}]</strong><br>']
+            for item in items:
+                t = _clean_sentence(item)
+                out.append(t[:-1] + '<br>' if t.endswith('.') else t + '<br>')
+            out.append('<br>')
+            return ''.join(out)
+
+        html = ['<div id="subsc">', f'  <h3>{name}</h3>', '	<p>']
+        html.append(block('이 상품을 초이스한 이유입니다.', reason_lines))
+        html.append(block('원단과 두께 체감에 대하여', material_block_lines))
+        html.append(block('체형과 핏, 사이즈 선택 가이드', fit_lines))
+        html.append(block('이렇게 입는 날이 많아집니다', wear_lines))
+        for line in closing_lines:
+            t = _clean_sentence(line)
+            html.append(t[:-1] + '<br>' if t.endswith('.') else t + '<br>')
+        html.append('
+	</p>')
+        html.append('</div>')
+        return ''.join(html)
 def build_subtap_html(data: Dict[str, str]):
     material_items = [x.strip() for x in (data["material"] or "").split("+") if x.strip()]
     material_line = " + ".join(material_items) if material_items else "소재 정보 입력 필요"
@@ -677,7 +760,8 @@ def indent_multiline_quote(text: str) -> str:
         return f'"{parts[0]}"<br>'
     first = parts[0]
     rest = ' '.join(parts[1:])
-    return f'"{first}<br>\n&nbsp;&nbsp;{rest}"<br>'
+    return f'"{first}<br>
+{rest}"<br>'
 
 
 def build_review_block(section: str, data: Dict[str, str]) -> str:
@@ -717,7 +801,8 @@ def wrap_answer_lines(answer: str) -> str:
     else:
         first = answer[:split_at].rstrip()
         rest = answer[split_at + 1:].lstrip()
-    return first + '<br>\n&nbsp;&nbsp;&nbsp;&nbsp;' + rest + '<br>'
+    return first + '<br>
+' + rest + '<br>'
 
 
 def build_faq_block(section: str, data: Dict[str, str]) -> str:
@@ -906,9 +991,24 @@ st.markdown("---")
 
 
 def fix_linebreaks(text):
-    text = text.replace('<br>', '<br>\n')
-    text = re.sub(r'(?<!\n)▪', '\n▪', text)
-    text = re.sub(r'\n{2,}', '\n', text)
+    text = text.replace('&nbsp;', '')
+    text = text.replace('<br>', '<br>
+')
+    text = re.sub(r'(?<!
+)▪', '
+▪', text)
+    text = re.sub(r'(<div id="subsc">)(?!
+)', r'
+', text)
+    text = re.sub(r'(</h3>)(?!
+)', r'
+', text)
+    text = re.sub(r'(<strong style="font-weight:700 !important;">\[[^\]]+\]</strong><br>)', r'
+', text)
+    text = re.sub(r'
+{3,}', '
+
+', text)
     return text
 
 h1, h2 = st.columns([2.2, 1.0], vertical_alignment="bottom")
@@ -986,8 +1086,9 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
                 max_retries=2,
             )
             raw_result = response.choices[0].message.content
-            subsc_html = extract_subsc_html(raw_result, display_name)
-            subsc_html, shopping_lines = normalize_md_subsc_html(subsc_html)
+            extracted_subsc = extract_subsc_html(raw_result, display_name)
+            extracted_subsc, shopping_lines = normalize_md_subsc_html(extracted_subsc)
+            subsc_html = build_md_subsc_from_data(data)
             subtap_html = build_subtap_html(data)
             source_block = FIXED_HTML_HEAD + "\n\n" + subsc_html + "\n\n" + subtap_html
             result = assemble_final_output(raw_result, source_block, data)
