@@ -896,68 +896,69 @@ def normalize_subsc_html(subsc_html: str, data: Dict[str, str]) -> str:
     title = normalize_phrase(title_match.group(1)) if title_match else name
     title = re.sub(r'\s*\((\d+\s*color)\)', r' (\1)', title, flags=re.I)
 
-    def section_body(label: str, stop_labels: list[str]) -> str:
+    def extract_section(label: str, stop_labels: list[str]) -> list[str]:
         start_marker = f'[{label}]'
         start_idx = html.find(start_marker)
         if start_idx == -1:
-            return ''
-        after = html.find('<br>', start_idx)
-        if after == -1:
-            return ''
-        body_start = after + 4
-        end_idx = html.find('</p>', body_start)
+            return []
+        next_positions = []
         for stop in stop_labels:
-            idx = html.find(f'[{stop}]', body_start)
-            if idx != -1 and idx < end_idx:
-                end_idx = idx
-        body = html[body_start:end_idx].strip()
-        body = re.sub(r'^(<br>\s*)+', '', body)
-        body = re.sub(r'(<br>\s*)+$', '', body)
-        return body
-
-    sec1 = section_body('이 상품을 초이스한 이유입니다.', ['원단과 두께 체감에 대하여', '체형과 핏, 사이즈 선택 가이드', '이렇게 입는 날이 많아집니다', '구매 전 꼭 확인해 주세요'])
-    sec2 = section_body('원단과 두께 체감에 대하여', ['체형과 핏, 사이즈 선택 가이드', '이렇게 입는 날이 많아집니다', '구매 전 꼭 확인해 주세요'])
-    sec3 = section_body('체형과 핏, 사이즈 선택 가이드', ['이렇게 입는 날이 많아집니다', '구매 전 꼭 확인해 주세요'])
-    sec4 = section_body('이렇게 입는 날이 많아집니다', ['구매 전 꼭 확인해 주세요'])
-
-    def clean_body(body: str) -> str:
+            idx = html.find(f'[{stop}]', start_idx + len(start_marker))
+            if idx != -1:
+                next_positions.append(idx)
+        end_idx = min(next_positions) if next_positions else len(html)
+        body = html[start_idx + len(start_marker):end_idx]
         body = body.replace('\r', '')
+        body = re.sub(r'</?p[^>]*>', '\n', body, flags=re.I)
+        body = re.sub(r'</?div[^>]*>', '\n', body, flags=re.I)
+        body = re.sub(r'</?strong[^>]*>', '', body, flags=re.I)
+        body = re.sub(r'<h3[^>]*>.*?</h3>', '', body, flags=re.I | re.S)
+        body = body.replace('&nbsp;', ' ')
+        body = re.sub(r'<br\s*/?>', '\n', body, flags=re.I)
         body = re.sub(r'\n+', '\n', body)
-        body = re.sub(r'(?<!<br>)\n', '<br>\n', body)
-        body = re.sub(r'(<br>\s*){3,}', '<br>\n<br>\n', body)
-        return body.strip()
+        raw_lines = [normalize_phrase(x) for x in body.split('\n') if normalize_phrase(x)]
+
+        lines = []
+        seen = set()
+        for line in raw_lines:
+            if line.startswith('[') and line.endswith(']'):
+                continue
+            if line.startswith('</div') or line.startswith('</p') or line.startswith('<div'):
+                continue
+            if line in seen:
+                continue
+            seen.add(line)
+            lines.append(line)
+        return lines
 
     mapping = [
-        ('이 상품을 초이스한 이유입니다.', clean_body(sec1)),
-        ('원단과 두께 체감에 대하여', clean_body(sec2)),
-        ('체형과 핏, 사이즈 선택 가이드', clean_body(sec3)),
-        ('이렇게 입는 날이 많아집니다', clean_body(sec4)),
+        ('이 상품을 초이스한 이유입니다.', ['원단과 두께 체감에 대하여', '체형과 핏, 사이즈 선택 가이드', '이렇게 입는 날이 많아집니다', '구매 전 꼭 확인해 주세요']),
+        ('원단과 두께 체감에 대하여', ['체형과 핏, 사이즈 선택 가이드', '이렇게 입는 날이 많아집니다', '구매 전 꼭 확인해 주세요']),
+        ('체형과 핏, 사이즈 선택 가이드', ['이렇게 입는 날이 많아집니다', '구매 전 꼭 확인해 주세요']),
+        ('이렇게 입는 날이 많아집니다', ['구매 전 꼭 확인해 주세요']),
     ]
 
     sections = []
-    for label, body in mapping:
-        if body:
-            sections.append(f'<strong style="font-weight:700 !important;">[{label}]</strong>')
-            for line in [x.strip() for x in body.splitlines() if x.strip()]:
-                if line == '<br>':
-                    sections.append('\t\t<br>')
-                else:
-                    if not line.startswith('<br>'):
-                        line = '<br> ' + line
-                    sections.append('\t\t' + line)
-            sections.append('\t\t<br>')
-            sections.append('\t\t<br>')
+    for label, stops in mapping:
+        lines = extract_section(label, stops)
+        if not lines:
+            continue
+        sections.append(f'\t\t<strong style="font-weight:700 !important;">[{label}]</strong>')
+        for line in lines:
+            sections.append(f'\t\t<br> {line}')
+        sections.append('\t\t<br>')
+        sections.append('\t\t<br>')
 
     if not sections:
         sections = [
-            '<strong style="font-weight:700 !important;">[이 상품을 초이스한 이유입니다.]</strong>', '\t\t<br> 여성스러운 분위기와 세련된 핏을 함께 담아낸 아이템입니다.', '\t\t<br>', '\t\t<br>',
-            '<strong style="font-weight:700 !important;">[원단과 두께 체감에 대하여]</strong>', '\t\t<br> 피부에 닿는 촉감이 부드럽고 데일리하게 입기 좋은 두께감입니다.', '\t\t<br>', '\t\t<br>',
-            '<strong style="font-weight:700 !important;">[체형과 핏, 사이즈 선택 가이드]</strong>', '\t\t<br> 여유 있는 실루엣이 군살을 자연스럽게 커버해 줍니다.', '\t\t<br>', '\t\t<br>',
-            '<strong style="font-weight:700 !important;">[이렇게 입는 날이 많아집니다]</strong>', '\t\t<br> 데일리부터 모임룩까지 다양하게 활용하실 수 있습니다.', '\t\t<br>', '\t\t<br>'
+            '\t\t<strong style="font-weight:700 !important;">[이 상품을 초이스한 이유입니다.]</strong>', '\t\t<br> 여성스러운 분위기와 세련된 핏을 함께 담아낸 아이템입니다.', '\t\t<br>', '\t\t<br>',
+            '\t\t<strong style="font-weight:700 !important;">[원단과 두께 체감에 대하여]</strong>', '\t\t<br> 피부에 닿는 촉감이 부드럽고 데일리하게 입기 좋은 두께감입니다.', '\t\t<br>', '\t\t<br>',
+            '\t\t<strong style="font-weight:700 !important;">[체형과 핏, 사이즈 선택 가이드]</strong>', '\t\t<br> 여유 있는 실루엣이 군살을 자연스럽게 커버해 줍니다.', '\t\t<br>', '\t\t<br>',
+            '\t\t<strong style="font-weight:700 !important;">[이렇게 입는 날이 많아집니다]</strong>', '\t\t<br> 데일리부터 모임룩까지 다양하게 활용하실 수 있습니다.', '\t\t<br>', '\t\t<br>'
         ]
 
-    body = '\n'.join(sections).rstrip()
-    return f'<div id="subsc">\n<h3>{title}</h3>\n\n	<p>\n{body}\n	</p>\n\n</div>'
+    body = '\n'.join(sections).replace('\\t', '\t')
+    return f'<div id="subsc">\n<h3>{title}</h3>\n\n\t<p>\n{body}\n\t</p>\n\n</div>'
 
 def assemble_final_output_sample(source_block: str, data: Dict[str, str], raw_result: str) -> str:
     lines = []
