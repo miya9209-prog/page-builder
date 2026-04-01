@@ -692,6 +692,204 @@ def assemble_final_output(raw_result: str, source_block: str, data: Dict[str, st
         lines.append('')
     return '\n'.join(lines).strip()
 
+
+
+def _clean_lines(text: str) -> list[str]:
+    out = []
+    for raw in re.split(r'\n+|<br>\s*', text or ''):
+        s = normalize_phrase(raw)
+        if s:
+            out.append(s)
+    return out
+
+
+def build_sample_recommend_lines(data: Dict[str, str]) -> list[str]:
+    fit = (data.get('fit') or '').strip()
+    material_desc = ' '.join(format_material_desc_for_top(data.get('material_desc') or ''))
+    detail = (data.get('detail_tip') or '').strip()
+    lines = []
+    if '여리' in fit or '여리' in material_desc:
+        lines.append('상체 군살 부각 없는 여리한 핏을 원하시는 분')
+    elif fit:
+        lines.append(f'{normalize_phrase(fit)}을 선호하시는 분')
+    else:
+        lines.append('체형을 자연스럽게 커버하는 세련된 핏을 찾으시는 분')
+    if any(k in material_desc for k in ['부드럽', '찰랑', '텐셀']):
+        lines.append('까슬거림 없이 부드러운 촉감을 중요하게 보시는 분')
+    else:
+        lines.append('하루 종일 편안한 착용감을 원하시는 분')
+    if detail:
+        if '타이' in detail or '브이넥' in detail:
+            lines.append('여성스럽고 세련된 디테일 포인트를 선호하시는 분')
+        elif '스트라이프' in detail:
+            lines.append('유행 타지 않는 패턴과 단정한 분위기를 좋아하시는 분')
+        else:
+            lines.append('단독으로 입어도 포인트가 되는 상의를 찾으시는 분')
+    else:
+        lines.append('데일리부터 외출룩까지 활용도 높은 아이템이 필요한 분')
+    return lines[:3]
+
+
+def build_sample_review_lines(data: Dict[str, str]) -> list[str]:
+    fit = (data.get('fit') or '').strip()
+    detail = (data.get('detail_tip') or '').strip()
+    lines = []
+    if '어깨' in fit or '여리' in fit:
+        lines.append('어깨 라인이 자연스럽게 떨어져 여리한 실루엣이 잘 살아나요.')
+    else:
+        lines.append('입었을 때 실루엣이 과하지 않게 정리되어 만족스러웠어요.')
+    if any(k in (data.get('material_desc') or '') for k in ['부드럽', '찰랑', '텐셀']):
+        lines.append('피부에 닿는 촉감이 부드럽고 답답하지 않아 오래 입기 좋았어요.')
+    else:
+        lines.append('원단이 편안하고 부담 없어 데일리하게 손이 자주 갈 것 같아요.')
+    if '소매' in detail or '절개' in detail or '타이' in detail:
+        lines.append('디테일이 은은하게 포인트가 되어 단독으로 입어도 충분히 멋스러워요.')
+    else:
+        lines.append('군살이 자연스럽게 커버되어 전체 핏이 한결 깔끔해 보여요.')
+    return lines[:3]
+
+
+def build_sample_faq_pairs(data: Dict[str, str]) -> list[tuple[str, str]]:
+    washing = (data.get('washing') or '드라이클리닝, 단독 울세탁, 손세탁을 권장합니다. 건조기 사용 금지').replace(' 권장. ', '을 권장합니다. ')
+    material_lines = format_material_desc_for_top(data.get('material_desc') or '')
+    material_ans = material_lines[0] if material_lines else '부드럽고 편안한 착용감의 소재입니다.'
+    pairs = [
+        ('77사이즈도 편하게 입을 수 있나요?', data.get('size') or 'FREE 사이즈로 77까지 추천드립니다.'),
+        ('원단이 너무 두껍거나 답답하지 않나요?', material_ans),
+        ('구김이 심하지 않나요?', '구김이 적은 소재라 하루 종일 비교적 깔끔하게 착용하기 좋습니다.'),
+        ('세탁은 어떻게 해야 하나요?', washing),
+    ]
+    return pairs
+
+
+def build_text_source_sample(data: Dict[str, str]) -> str:
+    rec = build_sample_recommend_lines(data)
+    rev = build_sample_review_lines(data)
+    faq = build_sample_faq_pairs(data)
+    parts = []
+    parts.append('<div style="text-align:center;">')
+    parts.append('\t<h3 style="margin-bottom:0;">')
+    parts.append('\t\t✓ 이런 분께 추천해요!</h3>')
+    parts.append('\t<br>')
+    parts.append('\t<p>')
+    parts.append('<span style="font-size:14px; line-height:1.8;">')
+    for line in rec:
+        parts.append(f'⦁ {line}<br>')
+    parts.append('<br>')
+    parts.append('</span>')
+    parts.append('\t\t<br>')
+    parts.append('\t\t<br>')
+    parts.append('\t\t<br>')
+    parts.append('\t</p>')
+    parts.append('')
+    parts.append('\t<h3 style=" margin-bottom:0;">')
+    parts.append('\t\t✓ 미리 입어 본 착용후기 (모델/스텝/MD리뷰)</h3>')
+    parts.append('\t<br>')
+    parts.append('\t<p>')
+    parts.append('\t\t<span style="font-size:14px; line-height:1.8;">')
+    for q in rev:
+        parts.append(f'"{q}"<br>')
+    parts.append('<br><br>')
+    parts.append('</span>')
+    parts.append('\t\t<br>')
+    parts.append('\t\t<br>')
+    parts.append('\t\t<br>')
+    parts.append('\t</p>')
+    parts.append('</div>')
+    parts.append('')
+    parts.append('')
+    parts.append('')
+    parts.append('<div style="text-align:center;">')
+    parts.append('')
+    parts.append('\t<h3 style="margin-bottom:0;">')
+    parts.append('\t\t✓ (FAQ) 이 상품, 이게 궁금해요!</h3>')
+    parts.append('\t<br>')
+    parts.append('\t<p><span style="font-size:14px; line-height:1.4;">')
+    for q,a in faq[:4]:
+        parts.append(f'Q. {q}<br>')
+        parts.append(f'A. {a}<br>')
+        parts.append('<br>')
+    parts.append('</span>')
+    parts.append('\t\t<br>')
+    parts.append('\t\t<br>')
+    parts.append('\t</p>')
+    parts.append('</div>')
+    return '\n'.join(parts).strip()
+
+
+def normalize_subsc_html(subsc_html: str, data: Dict[str, str]) -> str:
+    html = (subsc_html or '').strip()
+    if not html or '<div id="subsc">' not in html:
+        name = data.get('display_name') or '상품명'
+        intro = [
+            '여성스러운 디테일과 세련된 분위기를 함께 담아낸 아이템입니다.',
+            '체형을 자연스럽게 커버해 주는 실루엣으로 부담 없이 입기 좋습니다.',
+            '데일리부터 오피스룩, 모임룩까지 폭넓게 활용하실 수 있습니다.',
+        ]
+        body = '\n'.join([x + '<br>' for x in intro])
+        html = f'<div id="subsc">\n<h3>{name}</h3>\n<p>\n{body}\n</p>\n</div>'
+    html = html.replace('<div id="subsc">\n\t<h3>', '<div id="subsc">\n<h3>')
+    html = re.sub(r'<h3>(.*?)</h3>\s*(?!<p>)', r'<h3>\1</h3>\n<p>\n', html, count=1, flags=re.S)
+    if '</p>' not in html:
+        html = html.replace('</div>', '\n</p>\n</div>')
+    body_m = re.search(r'(<h3>.*?</h3>\s*<p>)([\s\S]*?)(</p>)', html)
+    if body_m:
+        body = body_m.group(2)
+        body = body.replace('  \n', '<br>\n')
+        body = re.sub(r'(?<!<br>)\n(?!\s*<)', '<br>\n', body)
+        body = re.sub(r'<br>\s*<br>\s*<br>\s*', '<br>\n<br>\n', body)
+        html = html[:body_m.start(2)] + body + html[body_m.end(2):]
+    return html
+
+
+def assemble_final_output_sample(source_block: str, data: Dict[str, str], raw_result: str) -> str:
+    lines = []
+    lines.append(f"상품명 : {data['display_name']}")
+    lines.append('')
+    lines.append(f"컬러 : {data['color']}")
+    lines.append(f"사이즈 : {data['size']}")
+    material_items = [x.strip() for x in (data['material'] or '').split('+') if x.strip()]
+    material_line = ' '.join(material_items) if material_items else data['material']
+    if '(건조기사용금지)' not in material_line:
+        material_line = f'{material_line} (건조기사용금지)'
+    lines.append(f'소재 : {material_line}')
+    lines.append('소재설명 :')
+    md_lines = format_material_desc_for_top(data['material_desc'])
+    if md_lines:
+        for x in md_lines[:3]:
+            lines.append(f'- {x}')
+    else:
+        lines.append('-')
+    lines.append(f"제조국 : {data['country']}")
+    lines.append('')
+    lines.append('')
+    lines.append('○ 포인트 코멘트 ')
+    lines.append('-')
+    lines.extend(['']*9)
+    lines.append('---------------------------------')
+    lines.append('텍스트 소스')
+    lines.append('---------------------------------')
+    lines.append('')
+    lines.append(build_text_source_sample(data))
+    lines.append('')
+    lines.append('')
+    lines.append(FIXED_HTML_HEAD)
+    lines.append('')
+    lines.append('')
+    lines.append(source_block.replace(FIXED_HTML_HEAD,'',1).strip())
+    lines.append('')
+    lines.append('')
+    lines.append('')
+    lines.append('-----------------')
+    lines.append('사이즈 팁')
+    lines.append('-----------------')
+    lines.append('')
+    fallbacks = fallback_size_tips()
+    for title in ['ㅇ55 (90) 160cm 48kg', 'ㅇ66 (95) 165cm 54kg', 'ㅇ66반 (95) 164cm 58kg', 'ㅇ77 (100) 163cm 61kg']:
+        lines.append(extract_size_tip_block(raw_result, title, fallbacks))
+        lines.append('')
+    return '\n'.join(lines).strip()
+
 def rewrite_material_desc(data: Dict[str, str]) -> str:
     memo = (data.get("material_desc") or "").strip()
     material = (data.get("material") or "").strip()
@@ -858,10 +1056,10 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
                 max_retries=2,
             )
             raw_result = response.choices[0].message.content
-            subsc_html = extract_subsc_html(raw_result, display_name)
+            subsc_html = normalize_subsc_html(extract_subsc_html(raw_result, display_name), data)
             subtap_html = build_subtap_html(data)
             source_block = FIXED_HTML_HEAD + "\n\n" + subsc_html + "\n\n" + subtap_html
-            result = assemble_final_output(raw_result, source_block, data)
+            result = assemble_final_output_sample(source_block, data, raw_result)
         except RateLimitError:
             st.error("현재 OpenAI 요청이 일시적으로 몰려 원고 생성을 완료하지 못했습니다. 결괏값 품질을 유지하기 위해 자동 대체문구는 넣지 않았습니다. 잠시 후 다시 시도해 주세요.")
             st.stop()
