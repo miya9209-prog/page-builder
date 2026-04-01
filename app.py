@@ -1,10 +1,33 @@
 
-def _fix_md_text(text):
-    text = text.replace("체형커버.", "군살을 자연스럽게 커버하는 세련된 실루엣 핏.")
-    text = text.replace("세련되게.", "세련된 스타일로 완성됩니다.")
-    text = text.replace("추천.", "추천드립니다.")
-    text = text.replace("디자인.", "디자인으로 완성됩니다.")
-    text = text.replace("활용도.", "활용도가 높은 아이템입니다.")
+def _fix_point_sections(text):
+    # 완전 재생성 (중복/깨짐 차단)
+    fabric = [
+        "울·텐셀·레이온·나일론 혼방의 부드럽고 고급스러운 텍스처.",
+        "은은한 광택감과 고급스러운 표면 질감.",
+        "가볍고 부담 없는 두께감으로 자연스럽게 흐르는 여리한 실루엣."
+    ]
+    detail = [
+        "탈부착 가능한 타이 디테일로 다양한 스타일 연출.",
+        "볼륨감 있는 소매로 팔 라인을 자연스럽게 커버.",
+        "앞 절개 라인으로 슬림해 보이는 시각적 효과."
+    ]
+    appeal = [
+        "군살을 자연스럽게 커버하는 세련된 실루엣 핏.",
+        "구김이 적어 관리가 편한 실용적 소재.",
+        "오피스·하객·데일리까지 확장 가능한 스타일링 활용도."
+    ]
+
+    block = ""
+    block += "3. (원단컷)\n" + "\n".join(fabric) + "\n\n"
+    block += "4. (디테일컷)\n" + "\n".join(detail) + "\n\n"
+    block += "5. (핵심어필 포인트)\n" + "\n".join(appeal)
+
+    text = re.sub(
+        r"3\. \(원단컷\)[\s\S]*?5\. \(핵심어필 포인트\)[\s\S]*?(?=\n-+|$)",
+        block,
+        text
+    )
+
     return text
 
 import base64
@@ -30,13 +53,6 @@ if "naming_result" not in st.session_state:
     st.session_state.naming_result = ""
 if "naming_input_value" not in st.session_state:
     st.session_state.naming_input_value = ""
-
-if "generated_result" not in st.session_state:
-    st.session_state.generated_result = _fix_md_text("")
-if "generated_docx" not in st.session_state:
-    st.session_state.generated_docx = b""
-if "generated_filename_base" not in st.session_state:
-    st.session_state.generated_filename_base = "page_builder"
 
 
 def chat_with_retry(*, model: str, messages, temperature: float = 0.2, max_retries: int = 2):
@@ -114,7 +130,8 @@ MD원고는 반드시 아래 기존 구조를 그대로 따릅니다.
 3. [원단과 두께 체감에 대하여]
 4. [체형과 핏, 사이즈 선택 가이드]
 5. [이렇게 입는 날이 많아집니다]
-6. 감성 마무리 문장
+6. [구매 전 꼭 확인해 주세요]
+7. 감성 마무리 문장
 
 중요 규칙
 - 각 문장은 한 줄이 너무 길지 않게 20~28자 안팎에서 자연스럽게 <br> 처리합니다.
@@ -386,8 +403,9 @@ def normalize_md_subsc_html(subsc: str):
     subsc = ensure_subsc_paragraph_wrapper(subsc)
     subsc = strip_leading_intro_from_subsc(subsc)
     subsc, shopping_lines = remove_shopping_block_from_subsc(subsc)
-    subsc = re.sub(r'<strong[^>]*>\[구매 전 꼭 확인해 주세요\]</strong>[\s\S]*?(?=<strong|</p>|</div>|\Z)', '', subsc, flags=re.S)
     return subsc, shopping_lines
+
+
 def sentence_to_point_phrase(text: str) -> str:
     s = normalize_phrase(text)
     if not s:
@@ -488,7 +506,7 @@ def build_shopping_block(lines_in: list[str], data: Dict[str, str]) -> str:
             if idx == 0 and not s.startswith(('▪', '⦁')):
                 s = '▪ ' + s
             lines.append(s)
-    body = '<br>\n'.join(lines)
+    body = '<br>'.join(lines)
     return '<div style="text-align:center;">\n\t<h3 style="margin-bottom:0;">\n\t\t✓쇼핑에 꼭 참고하세요</h3>\n\t<br>\n\t<p><span style="font-size:14px; line-height:1.8;">\n' + body + '\n</span>\n\t\t<br>\n\t\t<br>\n\t\t<br>\n\t</p>\n</div>'
 
 def extract_subsc_html(result: str, product_name: str):
@@ -534,13 +552,11 @@ def fallback_size_tips():
 def extract_size_tip_block(raw_result: str, title: str, fallback_map: dict):
     block = extract_block(raw_result, title, ["ㅇ55 (90) 160cm 48kg", "ㅇ66 (95) 165cm 54kg", "ㅇ66반 (95) 164cm 58kg", "ㅇ77 (100) 163cm 61kg"])
     rest = block.replace(title, '').replace('<br>', ' ').strip()
-    for stopper in ['----------------------------------', '<meta ', '<div id=', 'MD원고(상품 설명 소스)']:
-        if stopper in rest:
-            rest = rest.split(stopper, 1)[0].strip()
     rest = re.sub(r'\s+', ' ', rest)
     if block.strip() == title.strip() or not rest:
         rest = fallback_map[title]
     return title + "\n" + rest
+
 def format_material_desc_for_top(material_desc: str):
     lines = [x.strip() for x in (material_desc or '').splitlines() if x.strip()]
     cleaned = []
@@ -728,7 +744,22 @@ def wrap_answer_lines(answer: str) -> str:
     answer = normalize_phrase(answer)
     if not answer:
         return ''
-    return answer + '<br>'
+    if len(answer) <= 34:
+        return answer + '<br>'
+    split_at = max(answer.rfind(' ', 0, 30), answer.rfind(' ', 0, 34))
+    if split_at == -1:
+        parts = re.split(r'(?<=[.!?])\s+|,\s*', answer)
+        parts = [normalize_phrase(x) for x in parts if normalize_phrase(x)]
+        if len(parts) <= 1:
+            return answer + '<br>'
+        first = parts[0]
+        rest = ' '.join(parts[1:])
+    else:
+        first = answer[:split_at].rstrip()
+        rest = answer[split_at + 1:].lstrip()
+    return first + '<br>\n&nbsp;&nbsp;&nbsp;&nbsp;' + rest + '<br>'
+
+
 def build_faq_block(section: str, data: Dict[str, str]) -> str:
     body = extract_block(section, '(FAQ) 이 상품, 이게 궁금해요', [])
     body = re.sub(r'^\(FAQ\) 이 상품, 이게 궁금해요!?', '', body).strip()
@@ -885,9 +916,6 @@ def reset_all():
     st.session_state.reset_nonce += 1
     st.session_state.naming_result = ""
     st.session_state.naming_input_value = ""
-    st.session_state.generated_result = _fix_md_text("")
-    st.session_state.generated_docx = b""
-    st.session_state.generated_filename_base = "page_builder"
 
 st.markdown("---")
 st.subheader("상품 네이밍")
@@ -985,7 +1013,7 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
             response = chat_with_retry(
                 model="gpt-4.1",
                 messages=[{"role":"system","content":"사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},
-                    {"role": "system", "content": "MD원고에서는 상품명 아래 소개 문장과 [쇼핑에 꼭 참고하세요] 섹션을 넣지 않는다. [구매 전 꼭 확인해 주세요] 섹션은 절대 넣지 않는다. MD원고는 설명형 문장으로 쓴다. 포인트 원고는 명사형 리스팅으로 쓴다. 문장은 짧게 <br> 처리한다. 텍스트 소스는 4개 블록(추천/후기/FAQ/쇼핑에 꼭 참고하세요)으로 작성한다. FAQ는 상품 정보와 직접 관련된 질문만 만든다. 사이즈 팁 4개를 모두 채운다. 추가/수정 요청사항이 있으면 반드시 100% 반영한다. 무시하지 않는다."},
+                    {"role": "system", "content": "MD원고에서는 상품명 아래 소개 문장과 [쇼핑에 꼭 참고하세요] 섹션을 넣지 않는다. 문장은 짧게 <br> 처리한다. 텍스트 소스는 4개 블록(추천/후기/FAQ/쇼핑에 꼭 참고하세요)으로 작성한다. FAQ는 상품 정보와 직접 관련된 질문만 만든다. 사이즈 팁 4개를 모두 채운다. 추가/수정 요청사항이 있으면 반드시 100% 반영한다. 무시하지 않는다."},
                     {"role": "user", "content": user_content}
                 ],
                 temperature=0.2,
@@ -998,21 +1026,21 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
             source_block = FIXED_HTML_HEAD + "\n\n" + subsc_html + "\n\n" + subtap_html
             result = assemble_final_output(raw_result, source_block, data)
             result = result.replace(build_shopping_block([], data), build_shopping_block(shopping_lines, data))
-            st.session_state.generated_result = _fix_md_text(result)
-            st.session_state.generated_docx = result_to_docx_bytes(result)
-            st.session_state.generated_filename_base = (display_name or 'page_builder').replace(' ', '_')
         except RateLimitError:
             st.error("현재 OpenAI 요청이 일시적으로 몰려 원고 생성을 완료하지 못했습니다. 결괏값 품질을 유지하기 위해 자동 대체문구는 넣지 않았습니다. 잠시 후 다시 시도해 주세요.")
+            st.stop()
         except Exception as e:
             st.error(f"원고 생성 중 오류가 발생했습니다: {e}")
+            st.stop()
 
-if st.session_state.generated_result:
-    st.text_area("결과", st.session_state.generated_result, height=1200)
+    st.text_area("결과", result, height=1200)
+    docx_bytes = result_to_docx_bytes(result)
+
     c1, c2 = st.columns(2)
     with c1:
-        st.download_button("TXT 다운로드", data=st.session_state.generated_result, file_name=f"{st.session_state.generated_filename_base}_output.txt", mime="text/plain", use_container_width=True)
+        st.download_button("TXT 다운로드", data=result, file_name=f"{(display_name or 'page_builder').replace(' ', '_')}_output.txt", mime="text/plain", use_container_width=True)
     with c2:
-        st.download_button("HWP 다운로드", data=st.session_state.generated_docx, file_name=f"{st.session_state.generated_filename_base}_output.hwp", mime="application/x-hwp", use_container_width=True)
+        st.download_button("HWP 다운로드", data=docx_bytes, file_name=f"{(display_name or 'page_builder').replace(' ', '_')}_output.hwp", mime="application/x-hwp", use_container_width=True)
 
 st.markdown("---")
 st.markdown("© made by MISHARP, MIYAWA. All rights reserved.")
