@@ -1,3 +1,50 @@
+
+import re
+
+def smart_wrap(text, max_len):
+    words = re.split(r'(\s+)', text)
+    lines = []
+    current = ""
+    for w in words:
+        if len(current) + len(w) <= max_len:
+            current += w
+        else:
+            if current:
+                lines.append(current.strip())
+            current = w.strip()
+    if current:
+        lines.append(current.strip())
+    return "<br>".join(lines)
+
+def wrap_text_source(line):
+    return smart_wrap(line, 30)
+
+def wrap_md(text):
+    lines = smart_wrap(text, 22).split("<br>")
+    fixed = []
+    buffer = ""
+    for l in lines:
+        if len(l) < 12:
+            buffer += " " + l
+        else:
+            if buffer:
+                fixed.append(buffer.strip())
+                buffer = ""
+            fixed.append(l)
+    if buffer:
+        fixed.append(buffer.strip())
+    return "<br>".join(fixed)
+
+def to_noun(line):
+    line = re.sub(r'(추천합니다|권해드립니다|좋습니다|잘 어울립니다)', '', line)
+    line = line.strip().rstrip(".")
+    if not line.endswith("분"):
+        line += " 분"
+    return line + "."
+
+def clean_md(text):
+    return text.replace("[구매 전 꼭 확인해 주세요]", "")
+
 import base64
 import io
 import json
