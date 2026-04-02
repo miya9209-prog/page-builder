@@ -1,35 +1,37 @@
 import base64
-import time
-from openai import RateLimitError
 import io
 import mimetypes
 import re
-from typing import List, Dict, Any
+import time
+from typing import Any, Dict, List
 
 import streamlit as st
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 from docx import Document
 from docx.shared import Pt
 from docx.oxml.ns import qn
-from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 
 st.set_page_config(page_title="PAGE BUILDER", layout="wide")
 
-if "reset_nonce" not in st.session_state:
-    st.session_state.reset_nonce = 0
-if "naming_result" not in st.session_state:
-    st.session_state.naming_result = ""
-if "naming_input_value" not in st.session_state:
-    st.session_state.naming_input_value = ""
-if "generated_result" not in st.session_state:
-    st.session_state.generated_result = ""
-if "generated_docx" not in st.session_state:
-    st.session_state.generated_docx = b""
-if "generated_file_stem" not in st.session_state:
-    st.session_state.generated_file_stem = "page_builder"
+# -----------------------
+# session state
+# -----------------------
+for k, v in {
+    "reset_nonce": 0,
+    "naming_result": "",
+    "naming_input_value": "",
+    "generated_result": "",
+    "generated_docx": b"",
+    "generated_filename_base": "page_builder",
+}.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 
-def chat_with_retry(*, model: str, messages, temperature: float = 0.2, max_retries: int = 2):
+# -----------------------
+# helpers
+# -----------------------
+def chat_with_retry(client: OpenAI, *, model: str, messages, temperature: float = 0.2, max_retries: int = 2):
     last_exc = None
     for attempt in range(max_retries + 1):
         try:
@@ -47,118 +49,104 @@ def chat_with_retry(*, model: str, messages, temperature: float = 0.2, max_retri
             last_exc = exc
             if attempt >= max_retries:
                 raise
-            time.sleep(1 * (attempt + 1))
+            time.sleep(attempt + 1)
     raise last_exc
 
-st.markdown("""
-<style>
-div[data-testid="stButton"] > button { min-height: 42px; }
-</style>
-""", unsafe_allow_html=True)
 
-st.title("MISHARP PAGE BUILDER")
-st.caption("구매전환율 상승을 위한 상세페이지 기획 + 상품 원고 생성기")
+def normalize_space(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip())
 
-api_key = st.secrets.get("OPENAI_API_KEY", "")
-if not api_key:
-    st.warning("OPENAI_API_KEY가 설정되지 않았습니다. Streamlit Cloud Secrets 또는 .streamlit/secrets.toml을 확인해 주세요.")
-    st.stop()
 
-client = OpenAI(api_key=api_key)
+def split_items(text: str) -> List[str]:
+    raw = re.split(r"\n|/|,|·|•|⦁", text or "")
+    items = []
+    for x in raw:
+        s = normalize_space(x).strip("-▪")
+        if s and s not in items:
+            items.append(s)
+    return items
 
-FIXED_HTML_HEAD = """<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link href="http://fonts.googleapis.com/css?family=Roboto" rel="stylesheet" type="text/css">
-<link href="http://netdna.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css" rel="stylesheet" type="text/css">
-<link href="/SRC2/cssmtmenu/style.css" rel="stylesheet" type="text/css">
-<link href="//spoqa.github.io/spoqa-han-sans/css/SpoqaHanSans-kr.css" rel="stylesheet" type="text/css">
-<link href="//misharp.co.kr/subtap.css" rel="stylesheet" type="text/css">"""
 
-NAME_PROMPT = """
-너는 4050 여성 패션 쇼핑몰 미샵의 상품 네이밍 전문가다.
-- 상품 주요 특징을 반영해 상품명을 20개 제안한다.
-- 각 상품명은 공백 포함 최대 18자 이내.
-- 반드시 단어와 단어 사이를 자연스럽게 띄어쓴다.
-- AI 검색, 키워드 검색 모두 고려한다.
-- 디테일/형태/원단/핏 등을 반영한 단어 + 카테고리명을 포함한다.
-- 필요하면 세련되고 여성스러운 단어를 앞에 붙여도 된다.
-- 번호, 설명, 코드펜스 없이 한 줄에 하나씩 20개만 출력한다.
+def ensure_sentence(s: str, end: str = "습니다.") -> str:
+    s = normalize_space(s)
+    if not s:
+        return ""
+    if re.search(r"[.!?]$|니다$|요$|됩니다$|좋습니다$|어울립니다$|가능합니다$", s):
+        return s
+    return s + end
+
+
+def apply_color_count_to_name(product_name: str, color_text: str) -> str:
+    colors = [re.sub(r"^\d+\s*", "", normalize_space(x)) for x in re.split(r"\n|/|,", color_text or "")]
+    colors = [c for c in colors if c]
+    count = len(colors)
+    name = normalize_space(product_name)
+    suffix = f"({count} color)" if count else "(color)"
+    if re.search(r"\(\s*\d+\s*color\s*\)", name, flags=re.I):
+        return name
+    if re.search(r"\(\s*color\s*\)", name, flags=re.I):
+        return re.sub(r"\(\s*color\s*\)", suffix, name, flags=re.I)
+    return f"{name} {suffix}".strip()
+
+
+def extract_lines_with_digits(text: str) -> List[str]:
+    out = []
+    for raw in (text or "").splitlines():
+        line = normalize_space(raw)
+        if line and re.search(r"\d", line):
+            out.append(line)
+    return out
+
+
+def combine_measurements(top_text: str, bottom_text: str, dress_text: str) -> List[str]:
+    lines: List[str] = []
+    for block in [top_text, bottom_text, dress_text]:
+        lines.extend(extract_lines_with_digits(block))
+    return lines
+
+
+def format_measurement_lines(lines: List[str]) -> str:
+    if not lines:
+        return "실측사이즈 정보를 입력해 주세요."
+    return "<br>".join([normalize_space(x).replace(" 단위:cm", "").replace("단위:cm", "") for x in lines]) + " (단위: cm)"
+
+
+def material_desc_lines(material_desc: str) -> List[str]:
+    return [normalize_space(x) for x in (material_desc or "").splitlines() if normalize_space(x)]
+
+
+def rewrite_material_desc(client: OpenAI, data: Dict[str, str]) -> str:
+    memo = normalize_space(data.get("material_desc") or "")
+    if not memo:
+        return ""
+    prompt = f"""
+너는 여성의류 쇼핑몰 상세페이지의 소재설명 전문 에디터다.
+
+입력 정보
+- 소재: {data.get('material','')}
+- 참고메모: {memo}
+
+규칙
+- 참고메모를 그대로 복붙하지 말고 자연스럽고 전문적인 설명으로 다시 쓴다.
+- 3~4개의 짧은 리스팅 문장으로 작성한다.
+- 문장 끝 표현 반복을 줄인다.
+- 결과는 문장만 줄바꿈으로 출력한다.
 """
+    try:
+        r = chat_with_retry(
+            client,
+            model="gpt-4.1",
+            messages=[
+                {"role": "system", "content": "너는 여성의류 소재 설명을 자연스럽게 정리하는 전문가다."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+            max_retries=1,
+        )
+        return r.choices[0].message.content.strip()
+    except Exception:
+        return memo
 
-PRODUCT_COPY_PROMPT = """
-당신은 상세페이지 원고 전문 최고의 공감형 라이터입니다.
-4050 여성 전문 쇼핑몰 미샵(MISHARP)의 상품 상세페이지를
-구매 전 불안 제거, 기대치 명확화, 사이즈·핏 확신 제공을 최우선 목표로 작성합니다.
-
-핵심 원칙
-- 텍스트 입력을 우선하고 이미지는 보조 참고만 합니다.
-- 동영상 안내 문구는 절대 작성하지 않습니다.
-- 실측사이즈 입력 여부와 관계없이 사이즈 팁 4개는 반드시 모두 작성합니다.
-- 이번 응답에서는 MD원고(상품 설명 소스) 안의 HTML 중 오직 <div id="subsc"> ... </div> 만 작성합니다.
-- meta, link, Subtap은 작성하지 않습니다.
-
-MD원고는 반드시 아래 최신 구조를 그대로 따릅니다.
-1. 상품명 <h3>
-2. [이 상품을 초이스한 이유입니다.]
-3. [원단과 두께 체감에 대하여]
-4. [체형과 핏, 사이즈 선택 가이드]
-5. [이렇게 입는 날이 많아집니다]
-
-중요 규칙
-- 상품명 아래 소개 문장은 절대 쓰지 않습니다.
-- [쇼핑에 꼭 참고하세요]는 MD원고에 넣지 않습니다.
-- [구매 전 꼭 확인해 주세요]는 MD원고에 넣지 않습니다.
-- 마지막 감성 마무리 문장은 쓰지 않습니다.
-- 각 문장은 한 줄이 너무 길지 않게 자연스럽게 <br> 처리합니다.
-- 소제목은 반드시 <strong style="font-weight:700 !important;">[제목]</strong> 형태만 사용합니다.
-- 상품명은 반드시 <h3> 태그로만 작성합니다.
-
-텍스트 소스 규칙
-- 순서는 반드시 "✓ 이런 분께 추천해요!" → "✓ 미리 입어 본 착용후기 (모델/스텝/MD리뷰)" → "✓ (FAQ) 이 상품, 이게 궁금해요!" → "✓ 쇼핑에 꼭 참고하세요" 순서로 작성합니다.
-- 각 블록은 반드시 <div style="text-align:center;"> 로 감싸고, 제목은 <h3 style="margin-bottom:0;"> 로 작성합니다.
-- 추천/후기/쇼핑참고 문장 부분은 <span style="font-size:14px; line-height:1.8;"> 로 감쌉니다.
-- FAQ 문장 부분은 <span style="font-size:14px; line-height:1.4;"> 로 감쌉니다.
-- 추천 블록은 각 줄 앞에 반드시 ▪ 를 붙입니다.
-- 착용후기 블록은 각 문장을 따옴표로 감쌉니다.
-- FAQ는 반드시 4개를 작성합니다.
-"""
-
-OUTPUT_RULES = """
-최종 출력은 반드시 아래 순서와 제목을 그대로 지켜 하나의 텍스트 문서로 작성합니다.
-
-상품명 :
-컬러 :
-사이즈 :
-소재 :
-소재설명 :
-제조국 :
-
-
-○ 포인트 코멘트 
--
-
----------------------------------
-텍스트 소스
----------------------------------
-
-(중앙정렬 div + h3 + span 구조의 4개 블록)
-
-----------------------------------
-MD원고(상품 설명 소스)
-----------------------------------
-고정 메타/링크 코드
-<div id="subsc"> ... </div>
-<div id="Subtap"> ... </div>
-
------------------
-사이즈 팁
------------------
-
-ㅇ55 (90) 160cm 48kg
-ㅇ66 (95) 165cm 54kg
-ㅇ66반 (95) 164cm 58kg
-ㅇ77 (100) 163cm 61kg
-"""
 
 def file_to_content_item(uploaded_file):
     mime = uploaded_file.type or mimetypes.guess_type(uploaded_file.name)[0] or "image/jpeg"
@@ -166,565 +154,26 @@ def file_to_content_item(uploaded_file):
     b64 = base64.b64encode(data).decode("utf-8")
     return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
 
-def extract_lines_with_digits(text: str):
-    out = []
-    for raw in (text or "").splitlines():
-        line = raw.strip()
-        if line and re.search(r"\d", line):
-            out.append(line)
-    return out
 
-def combine_measurements(top_text: str, bottom_text: str, dress_text: str):
-    lines = []
-    for block in [top_text, bottom_text, dress_text]:
-        lines.extend(extract_lines_with_digits(block))
-    return lines
-
-def count_colors(color_text: str) -> int:
-    if not color_text.strip():
-        return 0
-    text = color_text.replace(" / ", "\n").replace("/", "\n").replace(",", "\n")
-    parts = [re.sub(r"^\s*\d+\s*", "", p).strip() for p in text.splitlines()]
-    parts = [p for p in parts if p]
-    return len(parts)
-
-def apply_color_count_to_name(product_name: str, color_text: str) -> str:
-    count = count_colors(color_text)
-    suffix = f"({count} color)" if count > 0 else "(color)"
-    name = (product_name or "").strip()
-    name = re.sub(r"\(\s*color\s*\)", suffix, name, flags=re.I)
-    if re.search(r"\(\s*\d+\s*color\s*\)", name, flags=re.I):
-        return name
-    if "( color)" in name:
-        return name.replace("( color)", f" {suffix}")
-    return name
-
-def build_user_prompt(data: Dict[str, str]) -> str:
-    return f"""
-{PRODUCT_COPY_PROMPT}
-
-{OUTPUT_RULES}
-
-입력 데이터
-- 상품명: {data['display_name']}
-- 컬러: {data['color']}
-- 사이즈: {data['size']}
-- 실측사이즈: {" / ".join(data['measurement_lines'])}
-- 소재: {data['material']}
-- 소재설명 참고메모: {data['material_desc']}
-- 디테일특징: {data['detail_tip']}
-- 핏/실루엣: {data['fit']}
-- 주요 어필 포인트: {data['appeal_points']}
-- 타겟: {data['target']}
-- 세탁방법: {data['washing']}
-- 기타: {data['etc']}
-
-중요 추가 지시
-- 상단의 "소재설명 :" 항목은 입력자가 적은 문구를 그대로 복붙하지 않습니다.
-- 입력된 소재설명 참고메모를 바탕으로, AI가 자연스럽고 전문적인 문장으로 다시 정리해 2~4개의 리스팅 문장으로 작성합니다.
-- 3. (원단컷)은 슬래시(/)로 한 줄에 붙이지 말고, 한 문장씩 한 줄로만 작성합니다.
-- 4. (디테일컷), 5. (핵심어필 포인트)는 키워드 나열이 아니라 자연스러운 리스팅형 문장으로 작성합니다.
-- 최하단 사이즈 팁은 한 체형당 한 문장을 엔터로 쪼개지 말고, 문장 흐름이 이어지도록 작성합니다.
-- 문장 끝 표현이 반복되지 않게 하고, 쇼핑몰 실무자가 바로 쓸 수 있는 설명문으로 다듬습니다.
-"""
-
-def format_measurement_lines(lines):
-    if not lines:
-        return "실측사이즈 정보를 입력해 주세요."
-    formatted = []
-    for line in lines:
-        line = re.sub(r"\s+단위:cm$", "", line).strip()
-        line = re.sub(r"\s+L\s+", "<br>L ", line)
-        line = re.sub(r"\s+M\s+", "<br>M ", line)
-        line = re.sub(r"\s+S\s+", "<br>S ", line)
-        line = re.sub(r"\s+XL\s+", "<br>XL ", line)
-        line = re.sub(r"\s+", " ", line)
-        formatted.append(line)
-    return "<br>".join(formatted) + " (단위: cm)"
-
-def build_subtap_html(data: Dict[str, str]):
-    material_items = [x.strip() for x in (data["material"] or "").split("+") if x.strip()]
-    material_line = " + ".join(material_items) if material_items else "소재 정보 입력 필요"
-    if "(건조기사용금지)" not in material_line:
-        material_line = f"{material_line} (건조기사용금지)"
-    washing = (data["washing"] or "").strip() or "드라이클리닝, 단독 울세탁, 손세탁 권장. 건조기 사용 금지"
-    size_tip = (data["size"] or "").strip() or "FREE 사이즈로 77까지 추천드립니다."
-    measurement_html = format_measurement_lines(data["measurement_lines"])
-
-    material_desc_lines = [x.strip() for x in (data["material_desc"] or "").splitlines() if x.strip()]
-    if not material_desc_lines:
-        material_desc_html = "상품 정보를 기준으로 소재 특성을 확인해 주세요.<br>"
-    else:
-        material_desc_html = "<br>\n\t\t\t\t\t\t\t\t\t".join(material_desc_lines) + "<br>"
-
-    return f"""<div id="Subtap">
-\t<div id="header2" role="banner">
-\t\t<nav class="nav" role="navigation">
-\t\t\t<ul class="nav__list">
-\t\t\t\t<li>
-\t\t\t\t\t<input id="group-1" type="checkbox" hidden="">
-\t\t\t\t\t<label for="group-1" style="border-top-color: rgb(204, 204, 204); border-top-width: 1px; border-top-style: solid;">
-\t\t\t\t\t\t<p class="fa fa-angle-right"></p>소재 정보</label>
-\t\t\t\t\t<ul class="group-list">
-\t\t\t\t\t\t<li>
-\t\t\t\t\t\t\t<a href="#">
-\t\t\t\t\t\t\t\t<h3>소재 : {material_line}</h3>
-\t\t\t\t\t\t\t\t<p>
-\t\t\t\t\t\t\t\t\t{material_desc_html}
-\t\t\t\t\t\t\t\t</p>
-\t\t\t\t\t\t\t\t<h3>세탁방법</h3>
-\t\t\t\t\t\t\t\t<p>{washing}</p>
-\t\t\t\t\t\t\t</a>
-\t\t\t\t\t\t</li>
-\t\t\t\t\t</ul>
-\t\t\t\t</li>
-\t\t\t\t<li>
-\t\t\t\t\t<input id="group-2" type="checkbox" hidden="">
-\t\t\t\t\t<label for="group-2">
-\t\t\t\t\t\t<p class="fa fa-angle-right"></p>사이즈 정보</label>
-\t\t\t\t\t<ul class="group-list gray">
-\t\t\t\t\t\t<li>
-\t\t\t\t\t\t\t<a href="#">
-\t\t\t\t\t\t\t\t<h3>사이즈 TIP</h3>
-\t\t\t\t\t\t\t\t<p>{size_tip}</p>
-\t\t\t\t\t\t\t\t<h3>길이 TIP</h3>
-\t\t\t\t\t\t\t\t<p>162-167cm에서는 모델핏을 참고해 주시고,
-<br> 다리 길이나 체형에 따라 다르지만,
-<br> 160cm이하에서는 모델의 핏보다 조금 길게
-<br> 연출됩니다.</p>
-\t\t\t\t\t\t\t</a>
-\t\t\t\t\t\t</li>
-\t\t\t\t\t</ul>
-\t\t\t\t</li>
-\t\t\t\t<li>
-\t\t\t\t\t<input id="group-3" type="checkbox" hidden="">
-\t\t\t\t\t<label for="group-3">
-\t\t\t\t\t\t<p class="fa fa-angle-right"></p>실측 사이즈</label>
-\t\t\t\t\t<ul class="group-list">
-\t\t\t\t\t\t<li>
-\t\t\t\t\t\t\t<a href="#">
-\t\t\t\t\t\t\t\t<p>{measurement_html}</p>
-\t\t\t\t\t\t\t</a>
-\t\t\t\t\t\t</li>
-\t\t\t\t\t</ul>
-\t\t\t\t</li>
-\t\t\t\t<li>
-\t\t\t\t\t<input id="group-5" type="checkbox" hidden="">
-\t\t\t\t\t<label for="group-5"><span class="fa fa-angle-right"></span>
-\t\t\t\t\t\t<a href="#crema-product-fit-1" style="padding: 0px; box-shadow:none; background:#f7f7f7;">실측사이즈 재는방법</a></label>
-\t\t\t\t</li>
-\t\t\t</ul>
-\t\t</nav>
-\t</div>
-</div>"""
-
-def extract_subsc_html(result: str, product_name: str):
-    m = re.search(r'<div id="subsc">[\s\S]*?</div>', result)
-    if m:
-        subsc = m.group(0)
-    else:
-        subsc = f"""<div id="subsc">
-  <h3>{product_name or "상품명"}</h3>
-  <p>
-    본문 내용을 생성하지 못했습니다.
-  </p>
-</div>"""
-    if '<h3>' not in subsc:
-        subsc = subsc.replace('<div id="subsc">', f'<div id="subsc">\n  <h3>{product_name or "상품명"}</h3>', 1)
-    return subsc
-
-
-def ensure_text_source_h3(block: str, title: str):
-    block = (block or '').strip()
-    if not block:
-        return f'<h3 style="margin-bottom:0;">\n{title}</h3>\n'
-    block = re.sub(r'^.*?<h3[^>]*>', '<h3 style="margin-bottom:0;">\n', block, count=1, flags=re.S)
-    if '<h3' not in block:
-        block = f'<h3 style="margin-bottom:0;">\n{title}</h3>\n' + block
-    block = re.sub(r'</h3>\s*<div[^>]*>', '</h3>\n', block, flags=re.S)
-    block = block.replace('</div>', '').strip()
-    return block
-
-def extract_block(raw: str, start_title: str, next_titles: list):
-    pattern = rf'{re.escape(start_title)}[\s\S]*?(?=' + '|'.join(re.escape(t) for t in next_titles) + r'|$)'
-    m = re.search(pattern, raw)
-    return m.group(0).strip() if m else start_title
-
-def fallback_size_tips():
-    return {
-        "ㅇ55 (90) 160cm 48kg": "전체적으로 여유가 느껴지며 부담 없이 편안하게 입기 좋은 핏입니다. 실루엣이 자연스럽게 정리됩니다.",
-        "ㅇ66 (95) 165cm 54kg": "가장 안정감 있게 떨어지는 핏으로 데일리부터 모임룩까지 활용이 좋습니다. 라인이 단정하게 정리됩니다.",
-        "ㅇ66반 (95) 164cm 58kg": "군살이 신경 쓰이는 부분을 편안하게 감싸주며 답답함 없이 입기 좋은 편입니다. 전체 핏이 자연스럽습니다.",
-        "ㅇ77 (100) 163cm 61kg": "체형을 편안하게 커버해 주는 실루엣으로 부담 없이 착용하기 좋습니다. 안정감 있는 핏이 돋보입니다.",
-    }
-
-def extract_size_tip_block(raw_result: str, title: str, fallback_map: dict):
-    block = extract_block(raw_result, title, ["ㅇ55 (90) 160cm 48kg", "ㅇ66 (95) 165cm 54kg", "ㅇ66반 (95) 164cm 58kg", "ㅇ77 (100) 163cm 61kg"])
-    rest = block.replace(title, '').replace('<br>', ' ').strip()
-    rest = re.sub(r'\s+', ' ', rest)
-    if block.strip() == title.strip() or not rest:
-        rest = fallback_map[title]
-    return title + "\n" + rest
-
-def format_material_desc_for_top(material_desc: str):
-    lines = [x.strip() for x in (material_desc or '').splitlines() if x.strip()]
-    cleaned = []
-    for line in lines:
-        line = re.sub(r'(소재)(\s*소재)+', r'\1', line)
-        line = re.sub(r'\s+', ' ', line).strip()
-        cleaned.append(line)
-    return cleaned
-
-
-def normalize_phrase(phrase: str) -> str:
-    p = re.sub(r'^[\-•⦁\s]+', '', (phrase or '').strip())
-    p = p.strip(' ,/;')
-    if not p:
-        return ''
-    p = re.sub(r'\s+', ' ', p)
-    return p
-
-
-def split_phrases(text: str):
-    if not text:
-        return []
-    temp = text.replace(' / ', '\n').replace('/', '\n').replace('·', '\n').replace('•', '\n').replace('⦁', '\n')
-    temp = temp.replace(', ', '\n').replace(',', '\n')
-    parts = [normalize_phrase(x) for x in temp.splitlines()]
-    return [x for x in parts if x]
-
-
-def phrase_to_sentence(phrase: str) -> str:
-    p = normalize_phrase(phrase)
-    if not p:
-        return ''
-    if re.search(r'[.!?다요]$', p):
-        return p
-    rules = [
-        (r'체형\s*커버', '체형을 자연스럽게 커버해 부담을 덜어줍니다.'),
-        (r'심플한\s*라인', '심플한 라인이 전체 실루엣을 더 깔끔하게 정리해 줍니다.'),
-        (r'유러?피안\s*무드', '유러피안 무드가 은은하게 살아 있어 세련된 분위기를 완성합니다.'),
-        (r'황금\s*단추', '황금 단추 디테일이 밋밋함 없이 고급스러운 포인트가 됩니다.'),
-        (r'카라\s*디테일', '카라 디테일이 얼굴선을 더 단정하고 정돈돼 보이게 해줍니다.'),
-        (r'원단\s*구김\s*없', '구김이 적은 원단이라 하루 종일 깔끔한 인상을 유지하기 좋습니다.'),
-        (r'탄력', '탄력이 좋아 움직임이 많은 날에도 편안하게 입기 좋습니다.'),
-        (r'편안함', '편안한 착용감으로 데일리 아이템으로 손이 자주 갑니다.'),
-        (r'탄탄한\s*면\s*소재', '탄탄한 면 소재가 핏을 안정감 있게 잡아줍니다.'),
-        (r'내구성', '내구성이 좋아 오래 입어도 흐트러짐이 적습니다.'),
-    ]
-    for pattern, repl in rules:
-        if re.search(pattern, p):
-            return repl
-    if p.endswith('핏'):
-        return f'{p}으로 입었을 때 전체 라인이 더 깔끔하게 정리됩니다.'
-    if p.endswith('디테일'):
-        return f'{p}이 세련된 포인트가 되어 완성도를 높여줍니다.'
-    if p.endswith('소재'):
-        return f'{p}로 편안하면서도 안정감 있는 착용감을 느끼실 수 있습니다.'
-    return f'{p}이 돋보여 전체적인 완성도를 높여줍니다.'
-
-
-def format_point_block(title: str, content_lines: list[str]) -> str:
-    lines = [title]
-    for line in content_lines:
-        line = normalize_phrase(line)
-        if line:
-            lines.append(line)
-    return '\n'.join(lines)
-
-
-def build_point_fallbacks(data: Dict[str, str]):
-    product = data.get('display_name') or data.get('product_name') or '상품'
-    fit = (data.get('fit') or '').strip()
-    material_lines = format_material_desc_for_top(data.get('material_desc') or '')
-    detail_phrases = split_phrases(data.get('detail_tip') or '')
-    appeal_phrases = split_phrases(data.get('appeal_points') or '')
-
-    headline = '\n'.join([
-        '2. 헤드라인',
-        product,
-        '편안함과 세련된 무드를 함께 담아낸 아이템',
-        '데일리부터 외출룩까지 자연스럽게 이어지는 분위기'
-    ])
-    fabric_lines = material_lines[:4] if material_lines else ['가볍고 편안한 착용감을 전해주는 소재입니다.', '데일리로 부담 없는 질감이 돋보입니다.']
-    if fit:
-        fabric_lines.append(f'{fit}으로 자연스럽게 흐르는 실루엣이 돋보입니다.' if not fit.endswith('니다.') else fit)
-    fabric = format_point_block('3. (원단컷)', fabric_lines[:4])
-    detail_lines = [phrase_to_sentence(x) for x in detail_phrases[:3]] or ['작은 차이가 완성도를 높이는 디테일이 돋보입니다.', '입었을 때 더 정돈돼 보이는 포인트가 살아 있습니다.']
-    if len(detail_lines) < 2:
-        detail_lines.append('입었을 때 더 정돈돼 보이는 포인트가 살아 있습니다.')
-    detail_block = format_point_block('4. (디테일컷)', detail_lines)
-    appeal_lines = [phrase_to_sentence(x) for x in appeal_phrases[:3]] or [phrase_to_sentence(fit) if fit else '체형 부담을 덜고 활용도를 높여주는 아이템입니다.', '매일 손이 가는 실용적인 매력이 있습니다.']
-    if len(appeal_lines) < 2:
-        appeal_lines.append('매일 손이 가는 실용적인 매력이 있습니다.')
-    appeal_block = format_point_block('5. (핵심어필 포인트)', appeal_lines)
-    return {
-        '2. 헤드라인': headline,
-        '3. (원단컷)': fabric,
-        '4. (디테일컷)': detail_block,
-        '5. (핵심어필 포인트)': appeal_block,
-    }
-
-
-def get_block_body(block: str, title: str) -> str:
-    return re.sub(r'^' + re.escape(title) + r'\s*', '', (block or '').strip())
-
-
-def normalize_fabric_lines(block_body: str, data: Dict[str, str]) -> list[str]:
-    parts = split_phrases(block_body)
-    if len(parts) < 2:
-        parts = format_material_desc_for_top(data.get('material_desc') or '')
-    lines = []
-    for p in parts:
-        if p.endswith(('과', '와', '및')):
-            continue
-        sent = p if re.search(r'[.!?다요]$', p) else (p + '입니다.' if not p.endswith('니다') else p)
-        lines.append(sent)
-    fit = (data.get('fit') or '').strip()
-    if fit:
-        fit_line = f'{fit}으로 자연스럽게 흐르는 실루엣이 돋보입니다.' if not re.search(r'[.!?다요]$', fit) else fit
-        if all(fit_line != x for x in lines):
-            lines.append(fit_line)
-    return lines[:4]
-
-
-def normalize_detail_or_appeal_lines(block_body: str, input_text: str, fallback_lines: list[str]) -> list[str]:
-    phrases = split_phrases(block_body)
-    raw_join = ' '.join(phrases)
-    if len(phrases) <= 1 or (raw_join and ',' in block_body) or ('/' in block_body):
-        phrases = split_phrases(input_text) or phrases
-    lines = [phrase_to_sentence(x) for x in phrases[:3]]
-    lines = [x for x in lines if x]
-    if not lines:
-        lines = fallback_lines
-    return lines[:4]
-
-
-def extract_text_source_section(raw_result: str) -> str:
-    m = re.search(r'---------------------------------\s*텍스트 소스\s*---------------------------------([\s\S]*?)----------------------------------\s*MD원고', raw_result)
-    return m.group(1).strip() if m else raw_result
-
-
-def wrap_center_block(title: str, body_html: str, line_height: str = "1.8") -> str:
-    return (
-        f"<div style=\"text-align:center;\">\n"
-        f"\t<h3 style=\"margin-bottom:0;\">\n"
-        f"\t\t{title}</h3>\n"
-        f"\t<br>\n"
-        f"\t<p>\n"
-        f"\t\t<span style=\"font-size:14px; line-height:{line_height};\">\n"
-        f"{body_html}\n"
-        f"</span>\n"
-        f"\t\t<br>\n"
-        f"\t\t<br>\n"
-        f"\t\t<br>\n"
-        f"\t</p>\n"
-        f"</div>"
-    )
-
-
-def build_recommend_block(section: str, data: Dict[str, str]) -> str:
-    bullets = [
-        '격식 있는 자리에도 여성스러운 무드를 원하시는 분',
-        '브이넥으로 얼굴이 갸름해 보이는 느낌을 선호하시는 분',
-        '데님, 스커트, 슬랙스 등 다양한 스타일링을 원하시는 분',
-        '고급스럽고 부드러운 텍스처를 좋아하시는 분',
-    ]
-    body = '<br>\n'.join([f'▪ {b}' for b in bullets])
-    return wrap_center_block('✓ 이런 분께 추천해요!', body, '1.8')
-
-
-def build_review_block(section: str, data: Dict[str, str]) -> str:
-    quotes = [
-        '피부에 닿는 촉감이 정말 부드러워요.',
-        '여유로운 핏이라 체형에 큰 구애 없이 편하게 입었어요.',
-        '디테일이 은은하게 포인트 되어 단독으로도 충분히 멋스럽습니다.',
-        '구김이 적어 하루 종일 깔끔하게 입기 좋아 만족도가 높았어요.',
-    ]
-    body = '<br>\n'.join([f'"{q}"' for q in quotes])
-    return wrap_center_block('✓ 미리 입어 본 착용후기 (모델/스텝/MD리뷰)', body, '1.8')
-
-
-def build_faq_block(section: str, data: Dict[str, str]) -> str:
-    size = normalize_phrase(data.get('size') or 'FREE 사이즈로 77까지 추천드립니다.')
-    faqs = [
-        ('Q. FREE 사이즈, 77까지 정말 맞나요?', f'A. {size}'),
-        ('Q. 스카프 스트랩은 탈부착이 되나요?', 'A. 네, 분리 가능해 타이 없는 스타일링도 가능합니다.'),
-        ('Q. 비침이 심한가요?', 'A. 아이보리는 약간의 비침이 있지만, 과하지 않으며, 스킨톤 이너와 함께 착용을 권장합니다.'),
-        ('Q. 구김이 많이 가나요?', 'A. 구김이 적은 혼용소재로 오랜 시간 깔끔하게 유지됩니다.'),
-    ]
-    body = []
-    for q, a in faqs:
-        body.append(q)
-        body.append(f'<br> {a}')
-        body.append('<br>\n<br> ')
-    inner = ''.join(body).rstrip()
-    return (
-        f"<div style=\"text-align:center;\">\n"
-        f"\t<h3 style=\"margin-bottom:0;\">\n"
-        f"\t\t✓ (FAQ) 이 상품, 이게 궁금해요!</h3>\n"
-        f"\t<br>\n"
-        f"\t<p><span style=\"font-size:14px; line-height:1.4;\">\n"
-        f"{inner}\n"
-        f"</span>\n"
-        f"\t\t<br>\n"
-        f"\t\t<br>\n"
-        f"\t\t<br>\n"
-        f"\t</p>\n"
-        f"</div>"
-    )
-
-
-def build_shopping_block(data: Dict[str, str]) -> str:
-    body = (
-        '▪ FREE 사이즈로 77까지 추천드려요.<br>\n'
-        '▪ 아이보리는 밝은 컬러 특성상 스킨톤 이너와 함께 착용하시면<br>\n'
-        '더욱 안정감 있게 입으실 수 있습니다.<br>\n'
-        '▪ 스카프 스트랩은 탈부착이 가능해<br>\n'
-        '취향에 따라 자유롭게 연출하세요.'
-    )
-    return wrap_center_block('✓ 쇼핑에 꼭 참고하세요', body, '1.8')
-
-
-def extract_named_md_section(raw: str, heading: str) -> str:
-    pattern = rf'<strong style="font-weight:700 !important;">\[{re.escape(heading)}\]</strong>\s*<br>([\s\S]*?)(?=<strong style="font-weight:700 !important;">\[|</p>|</div>)'
-    m = re.search(pattern, raw)
-    if m:
-        body = m.group(1).strip()
-        body = re.sub(r'(<br>\s*){2,}', '<br>\n', body)
-        return body
-    return ''
-
-
-def fallback_md_sections(data: Dict[str, str]) -> dict:
-    return {
-        '이 상품을 초이스한 이유입니다.': '<br> 세련된 분위기를 더해주는 디테일과\n\t\t<br> 자연스러운 체형 커버가 돋보이는 아이템입니다.\n\t\t<br> 다양한 하의와 손쉽게 어우러져\n\t\t<br> 데일리부터 격식 있는 자리까지 활용하기 좋습니다.',
-        '원단과 두께 체감에 대하여': '<br> 부드러운 촉감과 은은한 표면감이\n\t\t<br> 세련된 무드를 더해주며\n\t\t<br> 부담 없는 두께감으로\n\t\t<br> 데일리하게 입기 좋습니다.',
-        '체형과 핏, 사이즈 선택 가이드': '<br> FREE 사이즈로 55~77까지\n\t\t<br> 여유 있게 착용 가능하며\n\t\t<br> 자연스럽게 떨어지는 실루엣이\n\t\t<br> 상체를 한층 더 슬림하게 보이게 합니다.',
-        '이렇게 입는 날이 많아집니다': '<br> 중요한 미팅이나 모임, 격식 있는 자리\n\t\t<br> 데님이나 슬랙스와 매치한 데일리룩까지\n\t\t<br> 다양한 분위기로 자연스럽게\n\t\t<br> 손이 자주 가는 아이템입니다.',
-    }
-
-
-def build_latest_subsc_html(raw_result: str, data: Dict[str, str]) -> str:
-    display_name = data.get('display_name') or '상품명'
-    fallback = fallback_md_sections(data)
-    sections = []
-    for heading in ['이 상품을 초이스한 이유입니다.', '원단과 두께 체감에 대하여', '체형과 핏, 사이즈 선택 가이드', '이렇게 입는 날이 많아집니다']:
-        body = extract_named_md_section(raw_result, heading) or fallback[heading]
-        sections.append(f'\t\t<strong style="font-weight:700 !important;">[{heading}]</strong>{body}\n\t\t<br>\n\t\t<br>')
-    return '<div id="subsc">\n<h3>' + display_name + '</h3>\n\n\t<p>\n' + '\n'.join(sections) + '\n\t</p>\n\n</div>'
-
-
-def assemble_final_output(raw_result: str, source_block: str, data: Dict[str, str]):
-    lines = []
-    lines.append(f"상품명 : {data['display_name']}")
-    lines.append('')
-    lines.append(f"컬러 : {data['color']}")
-    lines.append(f"사이즈 : {data['size']}")
-    material_items = [x.strip() for x in (data['material'] or '').split('+') if x.strip()]
-    material_line = ' + '.join(material_items) if material_items else data['material']
-    if '(건조기사용금지)' not in material_line:
-        material_line = f'{material_line} (건조기사용금지)'
-    lines.append(f'소재 : {material_line}')
-    lines.append('소재설명 :')
-    md_lines = format_material_desc_for_top(data['material_desc'])
-    if md_lines:
-        for x in md_lines:
-            lines.append(f'- {x}')
-    else:
-        lines.append('-')
-    lines.append(f"제조국 : {data['country']}")
-    lines.append('')
-    lines.append('')
-    lines.append('○ 포인트 코멘트 ')
-    lines.append('-')
-    lines.append('')
-    lines.append('')
-    lines.append('---------------------------------')
-    lines.append('텍스트 소스')
-    lines.append('---------------------------------')
-    lines.append('')
-    section = extract_text_source_section(raw_result)
-    lines.append(build_recommend_block(section, data))
-    lines.append('')
-    lines.append(build_review_block(section, data))
-    lines.append('')
-    lines.append(build_faq_block(section, data))
-    lines.append('')
-    lines.append(build_shopping_block(data))
-    lines.append('')
-    lines.append('----------------------------------')
-    lines.append('MD원고(상품 설명 소스)')
-    lines.append('----------------------------------')
-    lines.append(source_block)
-    lines.append('')
-    lines.append('-----------------')
-    lines.append('사이즈 팁')
-    lines.append('-----------------')
-    lines.append('')
-    fallbacks = fallback_size_tips()
-    for title in ['ㅇ55 (90) 160cm 48kg', 'ㅇ66 (95) 165cm 54kg', 'ㅇ66반 (95) 164cm 58kg', 'ㅇ77 (100) 163cm 61kg']:
-        lines.append(extract_size_tip_block(raw_result, title, fallbacks))
-        lines.append('')
-    return '\n'.join(lines).strip()
-
-def rewrite_material_desc(data: Dict[str, str]) -> str:
-    memo = (data.get("material_desc") or "").strip()
-    material = (data.get("material") or "").strip()
-    if not memo and not material:
-        return ""
-    prompt = f"""
-너는 여성의류 쇼핑몰 상세페이지의 소재설명 전문 에디터다.
-
-입력 정보
-- 소재: {material}
-- 참고메모: {memo}
-
-규칙
-- 참고메모를 그대로 복붙하지 말고 자연스럽고 전문적인 설명으로 다시 쓴다.
-- 2~4개의 짧은 리스팅 문장으로 작성한다.
-- 문장 끝 표현 반복을 줄인다.
-- 과장 없이 실무자가 바로 상세페이지에 넣을 수 있게 쓴다.
-- 결과는 문장만 줄바꿈으로 출력한다. 번호, 기호, 설명 금지.
-"""
-    try:
-        response = chat_with_retry(
-            model="gpt-4.1",
-            messages=[{"role":"system","content":"사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},
-                {"role": "system", "content": "너는 소재설명 정리 전문가다."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-            max_retries=1,
-        )
-        return response.choices[0].message.content.strip()
-    except Exception:
-        return memo
-
-def result_to_docx_bytes(result_text: str):
+def result_to_docx_bytes(result_text: str) -> bytes:
     doc = Document()
     style = doc.styles["Normal"]
     style.font.name = "Dotum"
     style._element.rPr.rFonts.set(qn("w:eastAsia"), "돋움")
     style.font.size = Pt(10)
-    style.paragraph_format.space_before = Pt(0)
-    style.paragraph_format.space_after = Pt(0)
     style.paragraph_format.line_spacing = 1.5
-
     for line in result_text.splitlines():
         p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(0)
         p.paragraph_format.line_spacing = 1.5
         run = p.add_run(line)
         run.font.name = "Dotum"
         run._element.rPr.rFonts.set(qn("w:eastAsia"), "돋움")
         run.font.size = Pt(10)
-
     bio = io.BytesIO()
     doc.save(bio)
     bio.seek(0)
     return bio.getvalue()
+
 
 def reset_all():
     st.session_state.reset_nonce += 1
@@ -732,33 +181,213 @@ def reset_all():
     st.session_state.naming_input_value = ""
     st.session_state.generated_result = ""
     st.session_state.generated_docx = b""
-    st.session_state.generated_file_stem = "page_builder"
+    st.session_state.generated_filename_base = "page_builder"
+
+
+FIXED_HTML_HEAD = """<meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge,chrome=1\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<link href=\"http://fonts.googleapis.com/css?family=Roboto\" rel=\"stylesheet\" type=\"text/css\">\n<link href=\"http://netdna.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css\" rel=\"stylesheet\" type=\"text/css\">\n<link href=\"/SRC2/cssmtmenu/style.css\" rel=\"stylesheet\" type=\"text/css\">\n<link href=\"//spoqa.github.io/spoqa-han-sans/css/SpoqaHanSans-kr.css\" rel=\"stylesheet\" type=\"text/css\">\n<link href=\"//misharp.co.kr/subtap.css\" rel=\"stylesheet\" type=\"text/css\">"""
+
+
+def build_subtap_html(data: Dict[str, str]) -> str:
+    material_line = normalize_space(data.get("material") or "소재 정보 입력 필요")
+    if "(건조기사용금지)" not in material_line:
+        material_line += " (건조기사용금지)"
+    material_html = "<br>\n".join(material_desc_lines(data.get("material_desc") or "")) or "상품 정보를 기준으로 소재 특성을 확인해 주세요.<br>"
+    return f'''<div id="Subtap">\n\t<div id="header2" role="banner">\n\t\t<nav class="nav" role="navigation">\n\t\t\t<ul class="nav__list">\n\t\t\t\t<li>\n\t\t\t\t\t<input id="group-1" type="checkbox" hidden="">\n\t\t\t\t\t<label for="group-1" style="border-top-color: rgb(204, 204, 204); border-top-width: 1px; border-top-style: solid;">\n\t\t\t\t\t\t<p class="fa fa-angle-right"></p>소재 정보</label>\n\t\t\t\t\t<ul class="group-list">\n\t\t\t\t\t\t<li>\n\t\t\t\t\t\t\t<a href="#">\n\t\t\t\t\t\t\t\t<h3>소재 : {material_line}</h3>\n\t\t\t\t\t\t\t\t<p>{material_html}<br></p>\n\t\t\t\t\t\t\t\t<h3>세탁방법</h3>\n\t\t\t\t\t\t\t\t<p>{normalize_space(data.get('washing') or '드라이클리닝, 단독 울세탁, 손세탁 권장. 건조기 사용 금지')}</p>\n\t\t\t\t\t\t\t</a>\n\t\t\t\t\t\t</li>\n\t\t\t\t\t</ul>\n\t\t\t\t</li>\n\t\t\t\t<li>\n\t\t\t\t\t<input id="group-2" type="checkbox" hidden="">\n\t\t\t\t\t<label for="group-2"><p class="fa fa-angle-right"></p>사이즈 정보</label>\n\t\t\t\t\t<ul class="group-list gray">\n\t\t\t\t\t\t<li><a href="#">\n\t\t\t\t\t\t\t<h3>사이즈 TIP</h3>\n\t\t\t\t\t\t\t<p>{normalize_space(data.get('size') or 'FREE 사이즈로 77까지 추천드립니다.')}</p>\n\t\t\t\t\t\t\t<h3>길이 TIP</h3>\n\t\t\t\t\t\t\t<p>162-167cm에서는 모델핏을 참고해 주시고,<br> 다리 길이나 체형에 따라 다르지만,<br> 160cm이하에서는 모델의 핏보다 조금 길게<br> 연출됩니다.</p>\n\t\t\t\t\t\t</a></li>\n\t\t\t\t\t</ul>\n\t\t\t\t</li>\n\t\t\t\t<li>\n\t\t\t\t\t<input id="group-3" type="checkbox" hidden="">\n\t\t\t\t\t<label for="group-3"><p class="fa fa-angle-right"></p>실측 사이즈</label>\n\t\t\t\t\t<ul class="group-list"><li><a href="#"><p>{format_measurement_lines(data.get('measurement_lines') or [])}</p></a></li></ul>\n\t\t\t\t</li>\n\t\t\t\t<li>\n\t\t\t\t\t<input id="group-5" type="checkbox" hidden="">\n\t\t\t\t\t<label for="group-5"><span class="fa fa-angle-right"></span><a href="#crema-product-fit-1" style="padding: 0px; box-shadow:none; background:#f7f7f7;">실측사이즈 재는방법</a></label>\n\t\t\t\t</li>\n\t\t\t</ul>\n\t\t</nav>\n\t</div>\n</div>'''
+
+
+def build_md_subsc(data: Dict[str, str]) -> str:
+    name = data.get("display_name") or "상품명"
+    fit = normalize_space(data.get("fit") or "")
+    detail_items = split_items(data.get("detail_tip") or "")
+    appeal_items = split_items(data.get("appeal_points") or "")
+    mat = material_desc_lines(data.get("material_desc") or "")
+
+    reason_lines = []
+    if detail_items:
+        reason_lines.append(ensure_sentence(f"{detail_items[0]} 포인트가 세련된 분위기를 더해줍니다"))
+    if fit:
+        reason_lines.append(ensure_sentence(f"{fit}으로 체형 부담을 덜고 편안하게 입기 좋습니다"))
+    reason_lines.append(ensure_sentence(f"{name}은 데일리부터 격식 있는 자리까지 폭넓게 활용하기 좋습니다"))
+
+    fabric_lines = mat[:3] if mat else ["부드럽고 편안한 착용감을 느끼실 수 있습니다.", "부담 없는 두께감으로 데일리하게 활용하기 좋습니다."]
+
+    fit_lines = [ensure_sentence((data.get("size") or "FREE 사이즈로 77까지 추천드립니다.").replace("추천드립니다.", "추천드리며 여유 있게 착용 가능합니다."))]
+    if fit:
+        fit_lines.append(ensure_sentence(f"{fit}으로 자연스럽게 떨어지는 실루엣이 돋보입니다"))
+    if detail_items:
+        fit_lines.append(ensure_sentence(f"{detail_items[0]} 디테일이 전체 라인을 더욱 정돈돼 보이게 합니다"))
+
+    wear_lines = ["오피스룩, 모임룩, 데일리룩까지 자연스럽게 이어집니다."]
+    if appeal_items:
+        wear_lines.append(ensure_sentence(f"{appeal_items[0]}이 필요한 날 손이 자주 가는 아이템입니다"))
+    wear_lines.append("다양한 하의와 무리 없이 매치되어 활용도가 높습니다.")
+
+    def br_lines(lines: List[str]) -> str:
+        return "\n".join([f"\t\t<br> {x}" for x in lines if normalize_space(x)])
+
+    return f'''<div id="subsc">\n<h3>{name}</h3>\n\n\t<p>\n\t\t<strong style="font-weight:700 !important;">[이 상품을 초이스한 이유입니다.]</strong>\n{br_lines(reason_lines)}\n\t\t<br>\n\t\t<br>\n\t\t<strong style="font-weight:700 !important;">[원단과 두께 체감에 대하여]</strong>\n{br_lines(fabric_lines)}\n\t\t<br>\n\t\t<br>\n\t\t<strong style="font-weight:700 !important;">[체형과 핏, 사이즈 선택 가이드]</strong>\n{br_lines(fit_lines)}\n\t\t<br>\n\t\t<br>\n\t\t<strong style="font-weight:700 !important;">[이렇게 입는 날이 많아집니다]</strong>\n{br_lines(wear_lines)}\n\t\t<br>\n\t\t<br>\n\t</p>\n\n</div>'''
+
+
+def build_text_source_blocks(data: Dict[str, str]) -> List[str]:
+    name = data.get("display_name") or "상품"
+    fit = normalize_space(data.get("fit") or "")
+    detail = normalize_space(data.get("detail_tip") or "")
+    appeal = split_items(data.get("appeal_points") or "")
+    mat = material_desc_lines(data.get("material_desc") or "")
+
+    bullets = []
+    if fit:
+        bullets.append(f"▪ {fit}을 선호하시는 분")
+    if detail:
+        bullets.append(f"▪ {detail} 포인트를 좋아하시는 분")
+    if appeal:
+        bullets.append(f"▪ {appeal[0]}이 필요한 분")
+    bullets += [
+        f"▪ {name}처럼 데일리와 모임룩 모두 활용할 아이템을 찾는 분",
+        "▪ 구김 부담이 적고 관리가 편한 옷을 찾는 분",
+        "▪ 다양한 하의와 자연스럽게 매치되는 상의를 원하시는 분",
+    ]
+    rec_lines = []
+    for b in bullets:
+        if b not in rec_lines:
+            rec_lines.append(b)
+        if len(rec_lines) >= 4:
+            break
+
+    reviews = []
+    if mat:
+        reviews.append(f'"{mat[0].rstrip(".")} 정말 만족스러웠어요."')
+    if fit:
+        reviews.append(f'"{fit} 느낌이 과하지 않아 편하게 입기 좋았어요."')
+    if detail:
+        reviews.append(f'"{detail} 포인트가 은은하게 살아 있어 단독으로도 충분히 멋스러워요."')
+    reviews.append('"하루 종일 입어도 비교적 깔끔한 인상이 유지돼 만족도가 높았어요."')
+    reviews = reviews[:4]
+
+    bright = '아이보리' in (data.get('color') or '') or '화이트' in (data.get('color') or '')
+    has_tie = '타이' in detail or '스트랩' in detail
+    faq = [
+        ("Q. FREE 사이즈, 77까지 정말 맞나요?", f"A. {normalize_space(data.get('size') or 'FREE 사이즈로 77까지 추천드립니다.')}"),
+        ("Q. 스카프 스트랩은 탈부착이 되나요?" if has_tie else "Q. 디테일 포인트가 과하지 않나요?", "A. 네, 탈부착이 가능해 취향에 따라 다양하게 연출하실 수 있습니다." if has_tie else "A. 은은하게 포인트가 살아 있어 부담 없이 다양한 자리에 활용하기 좋습니다."),
+        ("Q. 비침이 심한가요?", "A. 밝은 컬러는 약간의 비침이 있을 수 있어 스킨톤 이너와 함께 착용하시면 더욱 안정감 있게 입으실 수 있습니다." if bright else "A. 비침 부담이 크지 않아 데일리하게 활용하기 좋습니다."),
+        ("Q. 구김이 많이 가나요?", "A. 구김이 적은 소재 특성상 오랜 시간 비교적 깔끔하게 유지됩니다."),
+    ]
+    shopping = [f"▪ {normalize_space(data.get('size') or 'FREE 사이즈로 77까지 추천드립니다.')}" ]
+    if bright:
+        shopping.append("▪ 아이보리는 밝은 컬러 특성상 스킨톤 이너와 함께 착용하시면 더욱 안정감 있게 입으실 수 있습니다.")
+    if has_tie:
+        shopping.append("▪ 스카프 스트랩은 탈부착이 가능해 취향에 따라 자유롭게 연출하세요.")
+    else:
+        shopping.append("▪ 실측사이즈를 함께 확인하시면 더욱 만족스러운 선택에 도움이 됩니다.")
+
+    blocks = []
+    blocks.append('<div style="text-align:center;">\n\t<h3 style="margin-bottom:0;">\n\t\t✓ 이런 분께 추천해요!</h3>\n\t<br>\n\t<p>\n\t\t<span style="font-size:14px; line-height:1.8;">\n' + "<br>\n".join(rec_lines) + '\n</span>\n\t\t<br>\n\t\t<br>\n\t\t<br>\n\t</p>\n</div>')
+    blocks.append('<div style="text-align:center;">\n\t<h3 style="margin-bottom:0;">\n\t\t✓ 미리 입어 본 착용후기 (모델/스텝/MD리뷰)</h3>\n\t<br>\n\t<p>\n\t\t<span style="font-size:14px; line-height:1.8;">\n' + "<br>\n".join(reviews) + '\n</span>\n\t\t<br>\n\t\t<br>\n\t\t<br>\n\t</p>\n</div>')
+    faq_body = []
+    for q, a in faq:
+        faq_body.extend([q, a, '<br>'])
+    blocks.append('<div style="text-align:center;">\n\t<h3 style="margin-bottom:0;">\n\t\t✓ (FAQ) 이 상품, 이게 궁금해요!</h3>\n\t<br>\n\t<p><span style="font-size:14px; line-height:1.4;">\n' + "<br>\n".join(faq_body) + '\n</span>\n\t\t<br>\n\t\t<br>\n\t\t<br>\n\t</p>\n</div>')
+    blocks.append('<div style="text-align:center;">\n\t<h3 style="margin-bottom:0;">\n\t\t✓ 쇼핑에 꼭 참고하세요</h3>\n\t<br>\n\t<p>\n\t\t<span style="font-size:14px; line-height:1.8;">\n' + "<br>\n".join(shopping) + '\n</span>\n\t\t<br>\n\t\t<br>\n\t\t<br>\n\t</p>\n</div>')
+    return blocks
+
+
+def build_size_tips(data: Dict[str, str]) -> List[str]:
+    fit = normalize_space(data.get("fit") or "여유 있는 핏")
+    tips = {
+        "ㅇ55 (90) 160cm 48kg": f"{fit}으로 전체적으로 부담 없이 떨어져 단독으로도 편하게 입기 좋습니다.",
+        "ㅇ66 (95) 165cm 54kg": "어깨와 가슴 라인이 답답하지 않고 자연스럽게 정리되어 데일리하게 활용하기 좋습니다.",
+        "ㅇ66반 (95) 164cm 58kg": "군살 커버가 자연스럽고 전체 실루엣이 깔끔하게 정리되는 편입니다.",
+        "ㅇ77 (100) 163cm 61kg": "여유 있는 품으로 체형 구애 없이 편안하게 착용 가능합니다.",
+    }
+    lines = []
+    for title, body in tips.items():
+        lines.append(title)
+        lines.append(body)
+        lines.append("")
+    return lines
+
+
+def assemble_output(data: Dict[str, str]) -> str:
+    lines = []
+    lines.append(f"상품명 : {data['display_name']}")
+    lines.append("")
+    lines.append(f"컬러 : {data['color']}")
+    lines.append(f"사이즈 : {data['size']}")
+    material_line = normalize_space(data['material'])
+    if material_line and "(건조기사용금지)" not in material_line:
+        material_line += " (건조기사용금지)"
+    lines.append(f"소재 : {material_line}")
+    lines.append("소재설명 :")
+    for m in material_desc_lines(data['material_desc']) or ["-"]:
+        if m == "-":
+            lines.append(m)
+        else:
+            lines.append(f"- {m}")
+    lines.append(f"제조국 : {data['country']}")
+    lines.append("")
+    lines.append("")
+    lines.append("○ 포인트 코멘트 ")
+    lines.append("-")
+    lines.append("")
+    lines.append("")
+    lines.append("---------------------------------")
+    lines.append("텍스트 소스")
+    lines.append("---------------------------------")
+    lines.append("")
+    lines.extend(build_text_source_blocks(data))
+    lines.append("")
+    lines.append("----------------------------------")
+    lines.append("MD원고(상품 설명 소스)")
+    lines.append("----------------------------------")
+    lines.append(FIXED_HTML_HEAD)
+    lines.append("")
+    lines.append(build_md_subsc(data))
+    lines.append("")
+    lines.append(build_subtap_html(data))
+    lines.append("")
+    lines.append("-----------------")
+    lines.append("사이즈 팁")
+    lines.append("-----------------")
+    lines.append("")
+    lines.extend(build_size_tips(data))
+    return "\n".join(lines).strip()
+
+
+# -----------------------
+# UI
+# -----------------------
+st.markdown("<style>div[data-testid='stButton'] > button { min-height: 42px; }</style>", unsafe_allow_html=True)
+st.title("MISHARP PAGE BUILDER")
+st.caption("구매전환율 상승을 위한 상세페이지 기획 + 상품 원고 생성기")
+
+api_key = st.secrets.get("OPENAI_API_KEY", "")
+client = OpenAI(api_key=api_key) if api_key else None
 
 st.markdown("---")
 st.subheader("상품 네이밍")
 ncol1, ncol2 = st.columns([5, 1], vertical_alignment="bottom")
 with ncol1:
-    naming_input = st.text_area("상품 주요특징 입력", height=120, placeholder="예: 여리핏, 부드러운 엠보 텍스처, 상체 군살 커버, 루즈핏 맨투맨", key="naming_input_value")
+    naming_input = st.text_area("상품 주요특징 입력", height=120, key="naming_input_value")
 with ncol2:
     if st.button("네이밍 생성", use_container_width=True):
-        if naming_input.strip():
-            with st.spinner("상품명을 생성 중입니다..."):
-                try:
-                    response = chat_with_retry(
-                        model="gpt-4.1",
-                        messages=[{"role":"system","content":"사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},{"role": "system", "content": NAME_PROMPT}, {"role": "user", "content": naming_input}],
-                        temperature=0.5,
-                        max_retries=2,
-                    )
-                    st.session_state.naming_result = response.choices[0].message.content.strip()
-                    st.rerun()
-                except RateLimitError:
-                    st.error("현재 OpenAI 요청이 일시적으로 몰려 네이밍 생성을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.")
-                except Exception as e:
-                    st.error(f"네이밍 생성 중 오류가 발생했습니다: {e}")
-        else:
-            st.warning("상품 주요특징을 입력해 주세요.")
-
+        if naming_input.strip() and client:
+            try:
+                response = chat_with_retry(
+                    client,
+                    model="gpt-4.1",
+                    messages=[
+                        {"role": "system", "content": "너는 4050 여성 패션 쇼핑몰 미샵의 상품 네이밍 전문가다. 상품명을 20개 제안한다. 한 줄에 하나씩만 출력한다."},
+                        {"role": "user", "content": naming_input},
+                    ],
+                    temperature=0.5,
+                    max_retries=2,
+                )
+                st.session_state.naming_result = response.choices[0].message.content.strip()
+                st.rerun()
+            except Exception as e:
+                st.error(f"네이밍 생성 중 오류가 발생했습니다: {e}")
+        elif not client:
+            st.warning("OPENAI_API_KEY가 설정되지 않았습니다.")
 st.text_area("상품 네이밍 제안 20개", value=st.session_state.naming_result, height=250)
 st.markdown("---")
 
@@ -770,23 +399,21 @@ with h2:
 
 nonce = st.session_state.reset_nonce
 left, right = st.columns(2)
-
 with left:
     product_name = st.text_input("상품명", value="( color)", key=f"product_name_{nonce}")
-    color = st.text_input("컬러", placeholder="예: 1 먹 / 2 블랙", key=f"color_{nonce}")
+    color = st.text_input("컬러", key=f"color_{nonce}")
     size = st.text_area("사이즈", height=90, value="FREE 사이즈로 77까지 추천드립니다.", key=f"size_{nonce}")
-    material = st.text_input("소재", placeholder="예: 폴리에스터70 + 레이온27 + 스판3", key=f"material_{nonce}")
-    material_desc = st.text_area("소재설명", height=110, placeholder="예: 후들후들 가볍고 부드러운 무광의 소재\n예: 비침이나 구김에 강하고 유연한 핏 연출", key=f"material_desc_{nonce}")
-    country = st.text_input("제조국", key=f"country_{nonce}")
+    material = st.text_input("소재", key=f"material_{nonce}")
+    material_desc = st.text_area("소재설명", height=110, key=f"material_desc_{nonce}")
+    country = st.text_input("제조국", value="한국", key=f"country_{nonce}")
     top_measure = st.text_area("상의 실측사이즈", height=120, value="어깨단면 / 가슴둘레 / 암홀둘레 / 소매길이 / 소매둘레 / 총장 / 총장(앞) / 총장(뒤)  단위:cm", key=f"top_measure_{nonce}")
     bottom_measure = st.text_area("하의 실측사이즈", height=110, value="F 허리둘레 / 엉덩이둘레 / 허벅지둘레 / 밑단둘레 / 총장 / 밑위 길이  단위:cm\nL 허리둘레 / 엉덩이둘레 / 허벅지둘레 / 밑단둘레 / 총장 / 밑위 길이  단위:cm", key=f"bottom_measure_{nonce}")
     dress_measure = st.text_area("원피스 실측사이즈", height=130, value="어깨단면 / 가슴둘레 / 허리둘레 / 엉덩이둘레 / 암홀둘레 / 소매길이 / 어깨소매길이 / 총장(앞) / 총장(뒤)  단위:cm", key=f"dress_measure_{nonce}")
-
 with right:
     detail_tip = st.text_input("디테일 특징 (예:디자인, 절개라인, 부자재, 스펙상 특징 등)", key=f"detail_tip_{nonce}")
     fit = st.text_input("핏/실루엣 (예:정핏,레귤러핏,오버핏 등/체형커버, 다리길어보이는 등의 특장점)", key=f"fit_{nonce}")
-    appeal_points = st.text_area("주요 어필 포인트 (예:고객 문제해결 포인트,원단 구김-탄력-내구성,체형커버,계절성,기능성,코디활용도 등)", height=150, key=f"appeal_points_{nonce}")
-    etc = st.text_area("기타 특징 (브랜드퀄리티,백화점납품상품,가격경쟁력,가성비,전문거래처 등)", height=120, key=f"etc_{nonce}")
+    appeal_points = st.text_area("주요 어필 포인트", height=150, key=f"appeal_points_{nonce}")
+    etc = st.text_area("기타 특징", height=120, key=f"etc_{nonce}")
     target = st.text_input("타겟", value="4050 여성", key=f"target_{nonce}")
     washing = st.text_input("세탁방법", value="드라이클리닝, 단독 울세탁, 손세탁 권장. 건조기 사용 금지", key=f"washing_{nonce}")
     additional_request = st.text_area("추가/수정 요청사항(출력물 확인 후 수정사항 입력)", height=120, key=f"additional_request_{nonce}")
@@ -796,19 +423,15 @@ uploaded_images = st.file_uploader("이미지", type=["jpg", "jpeg", "png", "web
 
 if st.button("생성하기", type="primary", use_container_width=True, key=f"generate_{nonce}"):
     display_name = apply_color_count_to_name(product_name, color)
-    measurement_lines = combine_measurements(top_measure, bottom_measure, dress_measure)
     data = {
         "product_name": product_name,
         "display_name": display_name,
         "color": color,
-        "size": size,
-        "material": material,
+        "size": normalize_space(size),
+        "material": normalize_space(material),
         "material_desc": material_desc,
-        "country": country,
-        "top_measure": top_measure,
-        "bottom_measure": bottom_measure,
-        "dress_measure": dress_measure,
-        "measurement_lines": measurement_lines,
+        "country": normalize_space(country) or "한국",
+        "measurement_lines": combine_measurements(top_measure, bottom_measure, dress_measure),
         "detail_tip": detail_tip,
         "fit": fit,
         "appeal_points": appeal_points,
@@ -816,49 +439,25 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
         "target": target,
         "washing": washing,
     }
-    data["material_desc"] = rewrite_material_desc(data)
-    prompt_text = build_user_prompt(data)
+    if client:
+        data["material_desc"] = rewrite_material_desc(client, data)
+    else:
+        data["material_desc"] = material_desc
     if additional_request.strip():
-        prompt_text += "\n\n추가/수정 요청사항\n" + additional_request + "\n"
-
-    user_content: List[Dict[str, Any]] = [{"type": "text", "text": prompt_text}]
-    for img in uploaded_images[:5] if uploaded_images else []:
-        user_content.append(file_to_content_item(img))
-
-    with st.spinner("출력물을 생성 중입니다..."):
-        try:
-            response = chat_with_retry(
-                model="gpt-4.1",
-                messages=[{"role":"system","content":"사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},
-                    {"role": "system", "content": "반드시 최신 출력 포맷을 따른다. MD원고는 상품명 아래 도입문 없이 4개 소제목만 작성하고 [쇼핑에 꼭 참고하세요], [구매 전 꼭 확인해 주세요], 감성 마무리 문장은 넣지 않는다. 텍스트 소스는 4개 블록 구조를 따른다. 사이즈 팁 4개를 모두 채운다. 추가/수정 요청사항이 있으면 반드시 100% 반영한다."},
-                    {"role": "user", "content": user_content}
-                ],
-                temperature=0.2,
-                max_retries=2,
-            )
-            raw_result = response.choices[0].message.content
-            subsc_html = build_latest_subsc_html(raw_result, data)
-            subtap_html = build_subtap_html(data)
-            source_block = FIXED_HTML_HEAD + "\n\n" + subsc_html + "\n\n" + subtap_html
-            result = assemble_final_output(raw_result, source_block, data)
-        except RateLimitError:
-            st.error("현재 OpenAI 요청이 일시적으로 몰려 원고 생성을 완료하지 못했습니다. 결괏값 품질을 유지하기 위해 자동 대체문구는 넣지 않았습니다. 잠시 후 다시 시도해 주세요.")
-            st.stop()
-        except Exception as e:
-            st.error(f"원고 생성 중 오류가 발생했습니다: {e}")
-            st.stop()
-
+        # reflect explicit request minimally in text source / md via concatenation to detail/appeal
+        data["appeal_points"] = (data["appeal_points"] + "\n" + additional_request).strip()
+    result = assemble_output(data).replace("&nbsp;", "")
     st.session_state.generated_result = result
     st.session_state.generated_docx = result_to_docx_bytes(result)
-    st.session_state.generated_file_stem = (display_name or 'page_builder').replace(' ', '_')
+    st.session_state.generated_filename_base = (display_name or "page_builder").replace(" ", "_")
 
 if st.session_state.generated_result:
     st.text_area("결과", st.session_state.generated_result, height=1200)
     c1, c2 = st.columns(2)
     with c1:
-        st.download_button("TXT 다운로드", data=st.session_state.generated_result, file_name=f"{st.session_state.generated_file_stem}_output.txt", mime="text/plain", use_container_width=True)
+        st.download_button("TXT 다운로드", data=st.session_state.generated_result, file_name=f"{st.session_state.generated_filename_base}_output.txt", mime="text/plain", use_container_width=True)
     with c2:
-        st.download_button("HWP 다운로드", data=st.session_state.generated_docx, file_name=f"{st.session_state.generated_file_stem}_output.hwp", mime="application/x-hwp", use_container_width=True)
+        st.download_button("HWP 다운로드", data=st.session_state.generated_docx, file_name=f"{st.session_state.generated_filename_base}_output.hwp", mime="application/x-hwp", use_container_width=True)
 
 st.markdown("---")
 st.markdown("© made by MISHARP, MIYAWA. All rights reserved.")
