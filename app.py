@@ -1,3 +1,20 @@
+
+RECOMMEND_RULE = """
+[추천 블록 작성 규칙]
+추천 블록 4문장은 반드시 아래 형식으로만 작성하세요.
+
+- 오피스룩으로 깔끔하게 입고 싶은 분
+- 체형을 자연스럽게 커버하고 싶은 분
+- 다양한 하의와 쉽게 코디하고 싶은 분
+- 구김 없이 편하게 입고 싶은 분
+
+반드시 지킬 것:
+1. 모든 문장은 반드시 "분"으로 끝날 것
+2. "추천합니다", "권해드립니다", "좋습니다", "적합합니다", "잘 어울립니다" 사용 금지
+3. "분께", "고객님께" 사용 금지
+4. "원하는 분", "찾는 분", "입고 싶은 분", "선호하는 분" 형태만 사용
+"""
+
 import base64
 import io
 import json
@@ -147,85 +164,6 @@ def clean_line(line: str) -> str:
     return line.strip()
 
 
-
-
-def _natural_wrap(text: str, min_len: int, max_len: int) -> list[str]:
-    text = re.sub(r"\s+", " ", (text or "").strip())
-    if not text:
-        return []
-    words = text.split(' ')
-    lines = []
-    cur = ''
-    for w in words:
-        cand = f"{cur} {w}".strip()
-        if len(cand) <= max_len:
-            cur = cand
-            continue
-        if cur:
-            # if current is too short and next word can fit with slight overflow, keep together once
-            if len(cur) < min_len and len(cand) <= max_len + 4:
-                lines.append(cand)
-                cur = ''
-            else:
-                lines.append(cur)
-                cur = w
-        else:
-            lines.append(w)
-            cur = ''
-    if cur:
-        lines.append(cur)
-    return lines
-
-
-def wrap_text_source(text: str) -> str:
-    return '<br>\n'.join(_natural_wrap(text, 18, 30))
-def wrap_md(text: str) -> str:
-    return '<br>\n'.join(_natural_wrap(text, 16, 24))
-def to_noun(line: str) -> str:
-    s = re.sub(r'\s+', ' ', (line or '').strip())
-    s = s.strip("\"“”' " )
-    s = s.rstrip('. ')
-    s = s.replace('원하시는 분께도', '원하시는 분')
-    s = s.replace('원하시는 분께', '원하시는 분')
-    s = s.replace('찾으시는 분께도', '찾으시는 분')
-    s = s.replace('찾으시는 분께', '찾으시는 분')
-    s = s.replace('고객님께도', '분')
-    s = s.replace('고객님께', '분')
-    s = s.replace('고객님', '분')
-    s = s.replace('분께도', '분')
-    s = s.replace('분께', '분')
-    s = re.sub(r'(추천드립니다|추천합니다|권해드립니다|권합니다|권해드려요|추천드려요|좋습니다|잘 어울립니다|이상적입니다|알맞습니다|적합합니다|만족을 드립니다|만족을 드릴 선택입니다|입니다)$', '', s).strip()
-    s = re.sub(r'\s+', ' ', s).strip(' .')
-    if not s.endswith('분'):
-        s += ' 분'
-    return s
-
-def strip_q_prefix(text: str) -> str:
-    s = clean_line(text).strip("\"“”")
-    s = re.sub(r'^(?:Q\.\s*)+', '', s, flags=re.I)
-    return s.strip()
-
-def strip_a_prefix(text: str) -> str:
-    s = clean_line(text).strip("\"“”")
-    s = re.sub(r'^(?:A\.\s*)+', '', s, flags=re.I)
-    return s.strip()
-
-def sanitize_review_text(text: str) -> str:
-    s = clean_line(text).strip("\"“”")
-    s = re.sub(r'\s+([.,])', r'\1', s)
-    return s.strip()
-
-def tidy_wrapped_html(text: str) -> str:
-    s = text.replace('<br>\n.', '.')
-    s = s.replace('<br>\n,', ',')
-    s = s.replace(' .', '.')
-    s = s.replace(' ,', ',')
-    s = s.replace(' .<br>', '.<br>')
-    return s
-
-def clean_md(text: str) -> str:
-    text = re.sub(r'<strong style="font-weight:700 !important;">\[구매 전 꼭 확인해 주세요\]</strong><br>\n(?:.*?<br>\n)+?<br>\n', '', text, flags=re.S)
-    return text
 def ensure_sentence(line: str, ending: str = ".") -> str:
     line = clean_line(line)
     if not line:
@@ -706,16 +644,14 @@ def build_subtap_html(data: Dict[str, str], material_desc_lines: List[str]) -> s
 
 def render_text_source(structured: Dict[str, Any]) -> str:
     rec_lines = ''.join([ '▪ ' + x.strip() + '<br>\n' for x in structured['recommend_lines'] ])
-    review_lines = ''.join([f'"{tidy_wrapped_html(wrap_text_source(sanitize_review_text(x)))}"<br>\n' for x in structured['review_lines']])
+    review_lines = ''.join([f'{x}<br>\n' for x in structured['review_lines']])
     faq_lines = []
     for idx, faq in enumerate(structured['faqs']):
-        q = tidy_wrapped_html(wrap_text_source(strip_q_prefix(faq['q'])))
-        a = tidy_wrapped_html(wrap_text_source(strip_a_prefix(faq['a'])))
-        faq_lines.append(f"Q. {q}<br>\n")
-        faq_lines.append(f"A. {a}<br>\n")
+        faq_lines.append(f"{faq['q']}<br>\n")
+        faq_lines.append(f"{faq['a']}<br>\n")
         if idx < len(structured['faqs']) - 1:
             faq_lines.append("<br>\n")
-    shopping_lines = ''.join([f"▪ {tidy_wrapped_html(wrap_text_source(clean_line(x)))}<br>\n" for x in structured['shopping_lines']])
+    shopping_lines = ''.join([f'▪ {x}<br>\n' for x in structured['shopping_lines'][:-1]]) + f'▪ {structured["shopping_lines"][-1]}'
 
     return (
         '<div style="text-align:center;">\n'
@@ -744,21 +680,21 @@ def render_text_source(structured: Dict[str, Any]) -> str:
         '<br><br><br><br>\n\n'
         '<div style="text-align:center;">\n'
         '<h3 style="margin-bottom:0;">\n'
-        '✓ 쇼핑에 꼭 참고하세요</h3>\n'
+        '✓쇼핑에 꼭 참고하세요</h3>\n'
         '<br>\n'
         '<p><span style="font-size:14px; line-height:1.8;">\n'
-        f'{shopping_lines}'
+        f'{shopping_lines}\n'
         '</span></p></div>\n'
         '<br><br><br>'
     )
 
+
 def render_subsc_html(data: Dict[str, str], structured: Dict[str, Any]) -> str:
     md = structured['md_sections']
-
     def join_lines(lines: List[str]) -> str:
-        return ''.join([f"{tidy_wrapped_html(wrap_md(clean_line(x)))}<br>\n" for x in lines if clean_line(x)])
+        return ''.join([f'{x}<br>\n' for x in lines])
 
-    html = (
+    return (
         '<div id="subsc">\n'
         f'<h3>{data["display_name"]}</h3>\n'
         '<p>\n'
@@ -774,9 +710,13 @@ def render_subsc_html(data: Dict[str, str], structured: Dict[str, Any]) -> str:
         '<strong style="font-weight:700 !important;">[이렇게 입는 날이 많아집니다]</strong><br>\n'
         f'{join_lines(md["occasion"])}'
         '<br>\n'
+        '<strong style="font-weight:700 !important;">[구매 전 꼭 확인해 주세요]</strong><br>\n'
+        f'{join_lines(md["purchase_note"])}'
+        '<br>\n'
+        f'{join_lines(md["ending"])}\n'
         '</p></div>'
     )
-    return clean_md(html)
+
 
 def assemble_final_output(data: Dict[str, str], structured: Dict[str, Any]) -> str:
     material_items = [x.strip() for x in (data['material'] or '').split('+') if x.strip()]
