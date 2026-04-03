@@ -1,49 +1,67 @@
 
-import re
+# -----------------------------
+# Output formatting helpers
+# -----------------------------
+def _split_by_punctuation(text: str):
+    text = re.sub(r"\s+", " ", (text or "").strip())
+    if not text:
+        return []
+    parts = re.split(r'(?<=[\.\?\!]|다\.|요\.|니다\.|습니다\.|예요\.|이에요\.|세요\.|까요\.)\s+', text)
+    return [p.strip() for p in parts if p.strip()]
 
-def smart_wrap(text, max_len):
-    words = re.split(r'(\s+)', text)
+def _wrap_korean_text(text: str, max_len: int) -> str:
+    text = re.sub(r'\s+', ' ', (text or '').strip())
+    if not text:
+        return ''
     lines = []
-    current = ""
-    for w in words:
-        if len(current) + len(w) <= max_len:
-            current += w
+    remaining = text
+    while len(remaining) > max_len:
+        cut = max_len
+        search_zone = remaining[:max_len+1]
+        candidates = [m.start() for m in re.finditer(r'[ ,]', search_zone)]
+        if candidates:
+            near = [c for c in candidates if c >= max_len-8]
+            if near:
+                cut = near[-1]
+            else:
+                cut = candidates[-1]
         else:
-            if current:
-                lines.append(current.strip())
-            current = w.strip()
-    if current:
-        lines.append(current.strip())
-    return "<br>".join(lines)
+            punct = [m.start()+1 for m in re.finditer(r'[,.·/]', search_zone)]
+            if punct:
+                cut = punct[-1]
+        line = remaining[:cut].strip(' ,')
+        if not line:
+            break
+        lines.append(line)
+        remaining = remaining[cut:].strip()
+    if remaining:
+        lines.append(remaining)
+    return '<br> '.join(lines)
 
-def wrap_text_source(line):
-    return smart_wrap(line, 30)
+def format_text_source_line(text: str) -> str:
+    return _wrap_korean_text(text, 30)
 
-def wrap_md(text):
-    lines = smart_wrap(text, 22).split("<br>")
-    fixed = []
-    buffer = ""
-    for l in lines:
-        if len(l) < 12:
-            buffer += " " + l
-        else:
-            if buffer:
-                fixed.append(buffer.strip())
-                buffer = ""
-            fixed.append(l)
-    if buffer:
-        fixed.append(buffer.strip())
-    return "<br>".join(fixed)
+def to_recommend_noun(text: str) -> str:
+    text = re.sub(r'\s+', ' ', (text or '').strip())
+    text = re.sub(r'(추천합니다|추천드려요|추천드립니다|권해드립니다|권해드려요|알맞습니다|잘 어울립니다|적합합니다|만족하실 만한 선택입니다|권해요|좋습니다)\.?$', '', text).strip()
+    text = re.sub(r'(추천합니다|추천드려요|추천드립니다|권해드립니다|권해드려요|알맞습니다|잘 어울립니다|적합합니다|만족하실 만한 선택입니다|권해요|좋습니다)', '', text).strip()
+    text = text.rstrip('.')
+    if text.endswith('분'):
+        return text + '.'
+    if text.endswith('분께'):
+        return text[:-1] + '.'
+    if text.endswith('고객님'):
+        return text + '.'
+    return text + ' 분.'
 
-def to_noun(line):
-    line = re.sub(r'(추천합니다|권해드립니다|좋습니다|잘 어울립니다)', '', line)
-    line = line.strip().rstrip(".")
-    if not line.endswith("분"):
-        line += " 분"
-    return line + "."
+def format_md_line(text: str) -> str:
+    return _wrap_korean_text(text, 22)
 
-def clean_md(text):
-    return text.replace("[구매 전 꼭 확인해 주세요]", "")
+def strip_purchase_section(md: dict) -> dict:
+    md = dict(md or {})
+    md.pop('purchase_note', None)
+    md.pop('ending', None)
+    return md
 
 import base64
 import io
