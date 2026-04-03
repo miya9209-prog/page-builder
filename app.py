@@ -183,36 +183,45 @@ def wrap_md(text: str) -> str:
     return '<br>\n'.join(_natural_wrap(text, 16, 24))
 def to_noun(line: str) -> str:
     s = re.sub(r'\s+', ' ', (line or '').strip())
+    s = s.strip("\"“”' " )
     s = s.rstrip('. ')
-    replacements = [
-        ('추천드립니다', ''), ('추천합니다', ''), ('권해드립니다', ''), ('권합니다', ''),
-        ('만족을 드립니다', ''), ('만족을 드릴 선택입니다', ''), ('이상적입니다', ''),
-        ('잘 어울립니다', ''), ('알맞습니다', ''), ('적합합니다', ''), ('좋습니다', ''),
-        ('권해드려요', ''), ('추천드려요', ''),
-    ]
-    for a,b in replacements:
-        s = s.replace(a,b)
     s = s.replace('원하시는 분께도', '원하시는 분')
     s = s.replace('원하시는 분께', '원하시는 분')
+    s = s.replace('찾으시는 분께도', '찾으시는 분')
     s = s.replace('찾으시는 분께', '찾으시는 분')
+    s = s.replace('고객님께도', '분')
     s = s.replace('고객님께', '분')
     s = s.replace('고객님', '분')
     s = s.replace('분께도', '분')
     s = s.replace('분께', '분')
-    s = s.replace('께도', '')
-    s = s.replace('께', '')
+    s = re.sub(r'(추천드립니다|추천합니다|권해드립니다|권합니다|권해드려요|추천드려요|좋습니다|잘 어울립니다|이상적입니다|알맞습니다|적합합니다|만족을 드립니다|만족을 드릴 선택입니다|입니다)$', '', s).strip()
     s = re.sub(r'\s+', ' ', s).strip(' .')
     if not s.endswith('분'):
-        if s.endswith('원하시는'):
-            s += ' 분'
-        elif s.endswith('좋아하시는'):
-            s += ' 분'
-        elif s.endswith('찾는'):
-            s += ' 분'
-        else:
-            s += ' 분'
+        s += ' 분'
     return s
 
+def strip_q_prefix(text: str) -> str:
+    s = clean_line(text).strip("\"“”")
+    s = re.sub(r'^(?:Q\.\s*)+', '', s, flags=re.I)
+    return s.strip()
+
+def strip_a_prefix(text: str) -> str:
+    s = clean_line(text).strip("\"“”")
+    s = re.sub(r'^(?:A\.\s*)+', '', s, flags=re.I)
+    return s.strip()
+
+def sanitize_review_text(text: str) -> str:
+    s = clean_line(text).strip("\"“”")
+    s = re.sub(r'\s+([.,])', r'\1', s)
+    return s.strip()
+
+def tidy_wrapped_html(text: str) -> str:
+    s = text.replace('<br>\n.', '.')
+    s = s.replace('<br>\n,', ',')
+    s = s.replace(' .', '.')
+    s = s.replace(' ,', ',')
+    s = s.replace(' .<br>', '.<br>')
+    return s
 
 def clean_md(text: str) -> str:
     text = re.sub(r'<strong style="font-weight:700 !important;">\[구매 전 꼭 확인해 주세요\]</strong><br>\n(?:.*?<br>\n)+?<br>\n', '', text, flags=re.S)
@@ -696,17 +705,17 @@ def build_subtap_html(data: Dict[str, str], material_desc_lines: List[str]) -> s
 
 
 def render_text_source(structured: Dict[str, Any]) -> str:
-    rec_lines = ''.join([f"▪ {wrap_text_source(to_noun(x))}<br>\n" for x in structured['recommend_lines']])
-    review_lines = ''.join([f'"{wrap_text_source(clean_line(x))}"<br>\n' for x in structured['review_lines']])
+    rec_lines = ''.join([f"▪ {tidy_wrapped_html(wrap_text_source(to_noun(x)))}<br>\n" for x in structured['recommend_lines']])
+    review_lines = ''.join([f'"{tidy_wrapped_html(wrap_text_source(sanitize_review_text(x)))}"<br>\n' for x in structured['review_lines']])
     faq_lines = []
     for idx, faq in enumerate(structured['faqs']):
-        q = wrap_text_source(clean_line(faq['q']))
-        a = wrap_text_source(clean_line(faq['a']))
+        q = tidy_wrapped_html(wrap_text_source(strip_q_prefix(faq['q'])))
+        a = tidy_wrapped_html(wrap_text_source(strip_a_prefix(faq['a'])))
         faq_lines.append(f"Q. {q}<br>\n")
         faq_lines.append(f"A. {a}<br>\n")
         if idx < len(structured['faqs']) - 1:
             faq_lines.append("<br>\n")
-    shopping_lines = ''.join([f"▪ {wrap_text_source(clean_line(x))}<br>\n" for x in structured['shopping_lines']])
+    shopping_lines = ''.join([f"▪ {tidy_wrapped_html(wrap_text_source(clean_line(x)))}<br>\n" for x in structured['shopping_lines']])
 
     return (
         '<div style="text-align:center;">\n'
@@ -747,7 +756,7 @@ def render_subsc_html(data: Dict[str, str], structured: Dict[str, Any]) -> str:
     md = structured['md_sections']
 
     def join_lines(lines: List[str]) -> str:
-        return ''.join([f"{wrap_md(clean_line(x))}<br>\n" for x in lines if clean_line(x)])
+        return ''.join([f"{tidy_wrapped_html(wrap_md(clean_line(x)))}<br>\n" for x in lines if clean_line(x)])
 
     html = (
         '<div id="subsc">\n'
