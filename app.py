@@ -1,3 +1,16 @@
+
+def sanitize_review_text(x):
+    return x.replace('"','').strip()
+
+def strip_q_prefix(x):
+    return x.replace("Q.","").strip()
+
+def strip_a_prefix(x):
+    return x.replace("A.","").strip()
+
+def clean_line(x):
+    return x.strip()
+
 import base64
 import io
 import json
