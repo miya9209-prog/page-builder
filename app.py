@@ -12,89 +12,6 @@ from docx.oxml.ns import qn
 from docx.shared import Pt
 from openai import OpenAI, RateLimitError
 
-
-def smart_wrap_korean(text: str, max_len: int) -> list[str]:
-    text = re.sub(r"\s+", " ", (text or "").strip())
-    if not text:
-        return []
-    parts = re.split(r'([,./·]| 그리고 | 또한 | 또는 | 및 | 과 | 와 | 에서 | 으로 | 로 | 이라 | 라는 | 을 | 를 | 이 | 가 | 은 | 는 | 도 | 에 | 와도 | 과도 )', text)
-    tokens=[]
-    for part in parts:
-        if not part:
-            continue
-        if isinstance(part, str) and part.strip()=='' and part != ' ':
-            continue
-        tokens.append(part)
-    lines=[]
-    cur=''
-    for tok in tokens:
-        cand=(cur+tok).strip() if cur else tok.strip()
-        if cur and len(cand)>max_len:
-            lines.append(cur.strip())
-            cur=tok.strip()
-        else:
-            cur=cand
-    if cur:
-        lines.append(cur.strip())
-    # merge tiny trailing lines
-    merged=[]
-    for line in lines:
-        if merged and len(line) < max(8, max_len//3) and len(merged[-1]) + 1 + len(line) <= max_len+4:
-            merged[-1]=merged[-1] + ' ' + line
-        else:
-            merged.append(line)
-    return merged
-
-
-def nounify_recommend(line: str) -> str:
-    line = re.sub(r'분께\s*(추천합니다|권해드립니다|잘 어울립니다|알맞습니다|적합합니다|이상적입니다|만족을 드립니다|좋습니다)\.?$', '', (line or '').strip())
-    line = re.sub(r'추천합니다\.?$', '', line)
-    line = re.sub(r'권해드립니다\.?$', '', line)
-    line = re.sub(r'잘 어울립니다\.?$', '', line)
-    line = re.sub(r'알맞습니다\.?$', '', line)
-    line = re.sub(r'적합합니다\.?$', '', line)
-    line = re.sub(r'이상적입니다\.?$', '', line)
-    line = re.sub(r'만족을 드립니다\.?$', '', line)
-    line = re.sub(r'좋습니다\.?$', '', line)
-    line = line.strip().rstrip('.')
-    if not line.endswith('분'):
-        if line.endswith('고객님'):
-            line = line[:-3] + '분'
-        else:
-            line += ' 분'
-    return line + '.'
-
-
-def html_wrapped_lines(lines: list[str], max_len: int, prefix: str = '') -> str:
-    out=[]
-    for item in lines:
-        wrapped = smart_wrap_korean(item, max_len)
-        if not wrapped:
-            continue
-        first = True
-        for w in wrapped:
-            out.append(f"{prefix if first else ''}{w}<br>\n")
-            first = False
-    return ''.join(out)
-
-
-def html_wrapped_faq(faqs: list[dict], max_len: int) -> str:
-    parts=[]
-    for idx, faq in enumerate(faqs):
-        q_lines = smart_wrap_korean(re.sub(r'^Q\.?\s*', '', faq.get('q','')), max_len)
-        a_lines = smart_wrap_korean(re.sub(r'^A\.?\s*', '', faq.get('a','')), max_len)
-        if q_lines:
-            parts.append(f"Q. {q_lines[0]}<br>\n")
-            for line in q_lines[1:]:
-                parts.append(f"{line}<br>\n")
-        if a_lines:
-            parts.append(f"A. {a_lines[0]}<br>\n")
-            for line in a_lines[1:]:
-                parts.append(f"{line}<br>\n")
-        if idx < len(faqs)-1:
-            parts.append('<br>\n')
-    return ''.join(parts)
-
 st.set_page_config(page_title="PAGE BUILDER", layout="wide")
 
 # -----------------------------
@@ -709,68 +626,80 @@ def build_subtap_html(data: Dict[str, str], material_desc_lines: List[str]) -> s
 
 
 def render_text_source(structured: Dict[str, Any]) -> str:
-    recommend_lines = [nounify_recommend(x) for x in structured['recommend_lines']]
-    rec_lines = html_wrapped_lines(recommend_lines, 30, prefix='▪ ')
-    review_lines = html_wrapped_lines(structured['review_lines'], 30)
-    faq_block = html_wrapped_faq(structured['faqs'], 30)
-    shopping_lines = html_wrapped_lines(structured['shopping_lines'], 30, prefix='▪ ')
+    rec_lines = ''.join([f'▪ {wrap_text_source(to_noun(x))}<br>\n' for x in structured['recommend_lines']])
+    review_lines = ''.join([f'{wrap_text_source(x)}<br>\n' for x in structured['review_lines']])
+    faq_lines = []
+    for idx, faq in enumerate(structured['faqs']):
+        q = wrap_text_source(faq['q'])
+        a = wrap_text_source(faq['a'])
+        faq_lines.append(f"{q}<br>\n")
+        faq_lines.append(f"{a}<br>\n")
+        if idx < len(structured['faqs']) - 1:
+            faq_lines.append("<br>\n")
+    shopping_lines = '<br>\n'.join([f'▪ {wrap_text_source(x)}' for x in structured['shopping_lines']])
 
-    return f"""<div style="text-align:center;">
-<h3 style="margin-bottom:0;">
-✓ 이런 분께 추천해요!</h3>
-<br>
-<p><span style="font-size:14px; line-height:1.8;">
-{rec_lines}</span></p></div>
-<br><br><br><br>
-
-<div style="text-align:center;">
-<h3 style="margin-bottom:0;">
-✓ 미리 입어 본 착용후기 (모델/스텝/MD리뷰)</h3>
-<br>
-<p><span style="font-size:14px; line-height:1.8;">
-{review_lines}</span></p></div>
-<br><br><br>
-
-<div style="text-align:center;">
-<h3 style="margin-bottom:0;">
-✓ (FAQ) 이 상품, 이게 궁금해요!</h3>
-<br>
-<p><span style="font-size:14px; line-height:1.4;">
-{faq_block}</span></p></div>
-<br><br><br><br>
-
-<div style="text-align:center;">
-<h3 style="margin-bottom:0;">
-✓ 쇼핑에 꼭 참고하세요</h3>
-<br>
-<p><span style="font-size:14px; line-height:1.8;">
-{shopping_lines}</span></p></div>
-<br><br><br>"""
+    return (
+        '<div style="text-align:center;">\n'
+        '<h3 style="margin-bottom:0;">\n'
+        '✓ 이런 분께 추천해요!</h3>\n'
+        '<br>\n'
+        '<p><span style="font-size:14px; line-height:1.8;">\n'
+        f'{rec_lines}'
+        '</span></p></div>\n'
+        '<br><br><br><br>\n\n'
+        '<div style="text-align:center;">\n'
+        '<h3 style="margin-bottom:0;">\n'
+        '✓ 미리 입어 본 착용후기 (모델/스텝/MD리뷰)</h3>\n'
+        '<br>\n'
+        '<p><span style="font-size:14px; line-height:1.8;">\n'
+        f'{review_lines}'
+        '</span></p></div>\n'
+        '<br><br><br>\n\n'
+        '<div style="text-align:center;">\n'
+        '<h3 style="margin-bottom:0;">\n'
+        '✓ (FAQ) 이 상품, 이게 궁금해요!</h3>\n'
+        '<br>\n'
+        '<p><span style="font-size:14px; line-height:1.4;">\n'
+        f'{"".join(faq_lines)}'
+        '</span></p></div>\n'
+        '<br><br><br><br>\n\n'
+        '<div style="text-align:center;">\n'
+        '<h3 style="margin-bottom:0;">\n'
+        '✓ 쇼핑에 꼭 참고하세요</h3>\n'
+        '<br>\n'
+        '<p><span style="font-size:14px; line-height:1.8;">\n'
+        f'{shopping_lines}\n'
+        '</span></p></div>\n'
+        '<br><br><br>'
+    )
 
 
 def render_subsc_html(data: Dict[str, str], structured: Dict[str, Any]) -> str:
     md = structured['md_sections']
 
     def join_lines(lines: List[str]) -> str:
-        out = []
-        for item in lines:
-            for line in smart_wrap_korean(item, 22):
-                out.append(f'{line}<br>\n')
-        return ''.join(out)
+        return ''.join([f'{wrap_md(x)}<br>\n' for x in lines])
 
-    ending = join_lines(md.get('ending', []))
-    return f"""<div id="subsc">
-<h3>{data['display_name']}</h3>
-<p>
-<strong style="font-weight:700 !important;">[이 상품을 초이스한 이유입니다.]</strong><br>
-{join_lines(md['choice'])}<br>
-<strong style="font-weight:700 !important;">[원단과 두께 체감에 대하여]</strong><br>
-{join_lines(md['fabric'])}<br>
-<strong style="font-weight:700 !important;">[체형과 핏, 사이즈 선택 가이드]</strong><br>
-{join_lines(md['fit'])}<br>
-<strong style="font-weight:700 !important;">[이렇게 입는 날이 많아집니다]</strong><br>
-{join_lines(md['occasion'])}<br>
-{ending}</p></div>"""
+    html = (
+        '<div id="subsc">\n'
+        f'<h3>{data["display_name"]}</h3>\n'
+        '<p>\n'
+        '<strong style="font-weight:700 !important;">[이 상품을 초이스한 이유입니다.]</strong><br>\n'
+        f'{join_lines(md["choice"])}'
+        '<br>\n'
+        '<strong style="font-weight:700 !important;">[원단과 두께 체감에 대하여]</strong><br>\n'
+        f'{join_lines(md["fabric"])}'
+        '<br>\n'
+        '<strong style="font-weight:700 !important;">[체형과 핏, 사이즈 선택 가이드]</strong><br>\n'
+        f'{join_lines(md["fit"])}'
+        '<br>\n'
+        '<strong style="font-weight:700 !important;">[이렇게 입는 날이 많아집니다]</strong><br>\n'
+        f'{join_lines(md["occasion"])}'
+        '<br>\n'
+        f'{join_lines(md["ending"])}'
+        '</p></div>'
+    )
+    return clean_md(html)
 
 
 def assemble_final_output(data: Dict[str, str], structured: Dict[str, Any]) -> str:
