@@ -1,3 +1,26 @@
+
+def build_recommend_block(data):
+    import re
+    result = []
+    for item in data:
+        item = item.strip()
+        item = re.sub(r'(추천드립니다|추천합니다|좋습니다|잘 어울립니다|만족하실)', '', item)
+
+        if "찾" in item:
+            item = item.replace("찾으시는", "찾으시는 분")
+        elif "원하" in item:
+            item = item.replace("원하시는", "원하시는 분")
+        elif "싶" in item:
+            item = item.replace("싶은", "싶으신 분")
+        else:
+            if not item.endswith("분"):
+                item += " 분"
+
+        item = item.strip().rstrip(".")
+        result.append(item)
+
+    return result
+
 import base64
 import io
 import json
@@ -181,7 +204,7 @@ def wrap_text_source(text: str) -> str:
     return '<br>\n'.join(_natural_wrap(text, 18, 30))
 def wrap_md(text: str) -> str:
     return '<br>\n'.join(_natural_wrap(text, 16, 24))
-def to_noun(line: str) -> str:
+def #removed_to_noun(line: str) -> str:
     s = re.sub(r'\s+', ' ', (line or '').strip())
     s = s.strip("\"“”' " )
     s = s.rstrip('. ')
@@ -323,7 +346,7 @@ def build_generation_prompt(data: Dict[str, str], additional_request: str) -> st
 - 상단 헤더: 상품명 / 컬러 / 사이즈 / 소재 / 소재설명 / 제조국
 - 포인트 원고(포토샵 작업): 현재는 비워 둔다.
 - 텍스트 소스: 추천 4줄 / 착용후기 4줄 / FAQ 4개 / 쇼핑참고 3줄
-- MD원고: [이 상품을 초이스한 이유입니다.] / [원단과 두께 체감에 대하여] / [체형과 핏, 사이즈 선택 가이드] / [이렇게 입는 날이 많아집니다] / [구매 전 꼭 확인해 주세요] + 마무리 3줄
+- MD원고: [이 상품을 초이스한 이유입니다.] / [원단과 두께 체감에 대하여] / [체형과 핏, 사이즈 선택 가이드] / [이렇게 입는 날이 많아집니다] /  + 마무리 3줄
 - 사이즈 팁: 55 / 66 / 66반 / 77 각 1문장
 """
     return f"""
@@ -705,7 +728,7 @@ def build_subtap_html(data: Dict[str, str], material_desc_lines: List[str]) -> s
 
 
 def render_text_source(structured: Dict[str, Any]) -> str:
-    rec_lines = ''.join([f"▪ {tidy_wrapped_html(wrap_text_source(to_noun(x)))}<br>\n" for x in structured['recommend_lines']])
+    rec_lines = ''.join([f"▪ {tidy_wrapped_html(wrap_text_source(#removed_to_noun(x)))}<br>\n" for x in structured['recommend_lines']])
     review_lines = ''.join([f'"{tidy_wrapped_html(wrap_text_source(sanitize_review_text(x)))}"<br>\n' for x in structured['review_lines']])
     faq_lines = []
     for idx, faq in enumerate(structured['faqs']):
