@@ -238,6 +238,94 @@ def reset_all():
     st.session_state.generated_file_stem = "page_builder"
 
 
+
+def normalize_recommend_line(line: str) -> str:
+    x = clean_line(line)
+    x = x.replace('"', '').replace("'", "")
+    # common bad endings / phrases
+    replacements = [
+        ("고객님께 잘 어울립니다", "분"),
+        ("고객님께 적극 권해드립니다", "분"),
+        ("고객님께 추천합니다", "분"),
+        ("분께 추천합니다", "분"),
+        ("분께 추천드립니다", "분"),
+        ("분께 적합합니다", "분"),
+        ("분께 잘 어울립니다", "분"),
+        ("여성 고객님께", "4050 여성 분"),
+        ("4050 여성에게", "4050 여성 분"),
+        ("여성에게", "여성 분"),
+        ("원하신다면 만족하실 거예요", "원하시는 분"),
+        ("원하신다면 만족하실", "원하시는 분"),
+        ("원하신다면", "원하시는 분"),
+        ("찾는 고객님께 잘 어울립니다", "찾으시는 분"),
+        ("찾는 고객님께", "찾으시는 분"),
+        ("찾는 분께", "찾으시는 분"),
+        ("찾는 분", "찾으시는 분"),
+        ("원하시는 분께", "원하시는 분"),
+        ("필요하신 분께", "필요하신 분"),
+        ("중요하게 생각하신다면", "중요하게 생각하시는 분"),
+        ("적극 권해드립니다", ""),
+        ("추천드립니다", ""),
+        ("추천합니다", ""),
+        ("잘 어울립니다", ""),
+        ("적합합니다", ""),
+        ("입니다", ""),
+        ("가능합니다", ""),
+    ]
+    for a,b in replacements:
+        x = x.replace(a,b)
+    x = re.sub(r'\s+', ' ', x).strip().rstrip('.')
+    # normalize endings
+    if x.endswith("분께"):
+        x = x[:-2] + "분"
+    if x.endswith("분 분"):
+        x = x[:-2]
+    if x.endswith("분 분"):
+        x = x.replace("분 분","분")
+    if not x.endswith("분"):
+        # heuristic based on meaning
+        if "찾" in x and "분" not in x:
+            x = re.sub(r'찾(는|고 싶은|고싶은)$', '찾으시는 분', x)
+            if not x.endswith("분"):
+                x = x + "을 찾으시는 분"
+        elif "원하" in x:
+            if not x.endswith("분"):
+                x = re.sub(r'원하(는|시는)?$', '원하시는 분', x)
+                if not x.endswith("분"):
+                    x = x + " 원하시는 분"
+        elif "필요" in x:
+            x = x + " 필요한 분"
+        else:
+            x = x + " 분"
+    x = x.replace("입니다을", "을")
+    x = x.replace("분 분", "분")
+    x = x.replace("  ", " ")
+    return x
+
+def wrap_korean_text(text: str, max_len: int = 28) -> str:
+    text = clean_line(text)
+    if len(text) <= max_len:
+        return text
+    # split by spaces, preserving Korean word groups
+    parts = text.split(' ')
+    lines = []
+    cur = ""
+    for p in parts:
+        cand = p if not cur else cur + " " + p
+        if len(cand) <= max_len:
+            cur = cand
+        else:
+            if cur:
+                lines.append(cur)
+                cur = p
+            else:
+                # hard cut if single token is too long
+                lines.append(p[:max_len])
+                cur = p[max_len:]
+    if cur:
+        lines.append(cur)
+    return '<br>\n'.join(lines)
+
 def build_generation_prompt(data: Dict[str, str], additional_request: str) -> str:
     sample_format = """
 출력폼 구조 핵심:
@@ -307,8 +395,8 @@ JSON 스키마
 
 작성 기준
 - material_desc_lines: 3줄 권장. 소재 장점과 표면감, 계절감, 관리 포인트를 자연스럽게.
-- recommend_lines: 고객 유형 중심으로 4줄.
-- review_lines: 실제 미샵 스탭이 말할 법한 자연스러운 후기로 4줄.
+- recommend_lines: 반드시 "~을 찾으시는 분", "~을 원하시는 분", "~이 필요하신 분" 형태로 4줄. "추천합니다", "좋습니다", "적합합니다", "분께" 금지.
+- review_lines: 실제 미샵 스탭이 말할 법한 자연스러운 후기로 4줄. 각 문장은 한 문장으로 완결되게.
 - faqs: 각 질문은 구체적으로. 예) 가슴이 있는 77 체형, 밝은 컬러 비침, 하루 종일 구김, TPO 활용, 관리법 등.
 - shopping_lines: 꼭 확인해야 할 실용 정보 3줄.
 - md_sections.choice: 왜 이 상품을 골라야 하는지 설득형.
@@ -459,7 +547,7 @@ def generate_structured_copy(data: Dict[str, str], additional_request: str, uplo
         user_content.append(file_to_content_item(img))
 
     response = chat_with_retry(
-        model="gpt-4.1",
+        model="gpt-4o",
         messages=[
             {"role": "system", "content": "사용자가 입력한 추가/수정 요청사항은 최우선으로 반드시 반영해야 한다."},
             {"role": "system", "content": "반드시 JSON만 출력한다. 없는 디테일은 추정하지 않는다. 입력 문구를 그대로 반복하지 말고 고객 니즈 중심의 매력적인 한국어 문장으로 재작성한다."},
@@ -625,16 +713,19 @@ def build_subtap_html(data: Dict[str, str], material_desc_lines: List[str]) -> s
 </div>"""
 
 
+
 def render_text_source(structured: Dict[str, Any]) -> str:
-    rec_lines = ''.join([f'▪ {x}<br>\n' for x in structured['recommend_lines']])
-    review_lines = ''.join([f'{x}<br>\n' for x in structured['review_lines']])
+    rec_lines = ''.join([f'▪ {wrap_korean_text(normalize_recommend_line(x), 28)}<br>\n' for x in structured['recommend_lines']])
+    review_lines = ''.join([f'"{clean_line(x).replace(chr(34), "")}"<br>\n' for x in structured['review_lines']])
     faq_lines = []
     for idx, faq in enumerate(structured['faqs']):
-        faq_lines.append(f"{faq['q']}<br>\n")
-        faq_lines.append(f"{faq['a']}<br>\n")
+        q = strip_q_prefix(clean_line(faq['q']))
+        a = strip_a_prefix(clean_line(faq['a']))
+        faq_lines.append(f"Q. {wrap_korean_text(q, 30)}<br>\n")
+        faq_lines.append(f"A. {wrap_korean_text(a, 30)}<br>\n")
         if idx < len(structured['faqs']) - 1:
             faq_lines.append("<br>\n")
-    shopping_lines = ''.join([f'▪ {x}<br>\n' for x in structured['shopping_lines'][:-1]]) + f'▪ {structured["shopping_lines"][-1]}'
+    shopping_lines = ''.join([f'▪ {wrap_korean_text(clean_line(x), 30)}<br>\n' for x in structured['shopping_lines']])
 
     return (
         '<div style="text-align:center;">\n'
@@ -663,19 +754,18 @@ def render_text_source(structured: Dict[str, Any]) -> str:
         '<br><br><br><br>\n\n'
         '<div style="text-align:center;">\n'
         '<h3 style="margin-bottom:0;">\n'
-        '✓쇼핑에 꼭 참고하세요</h3>\n'
+        '✓ 쇼핑에 꼭 참고하세요</h3>\n'
         '<br>\n'
         '<p><span style="font-size:14px; line-height:1.8;">\n'
-        f'{shopping_lines}\n'
+        f'{shopping_lines}'
         '</span></p></div>\n'
-        '<br><br><br>'
     )
 
 
 def render_subsc_html(data: Dict[str, str], structured: Dict[str, Any]) -> str:
     md = structured['md_sections']
     def join_lines(lines: List[str]) -> str:
-        return ''.join([f'{x}<br>\n' for x in lines])
+        return ''.join([f'{wrap_korean_text(clean_line(x), 24)}<br>\n' for x in lines])
 
     return (
         '<div id="subsc">\n'
@@ -693,13 +783,8 @@ def render_subsc_html(data: Dict[str, str], structured: Dict[str, Any]) -> str:
         '<strong style="font-weight:700 !important;">[이렇게 입는 날이 많아집니다]</strong><br>\n'
         f'{join_lines(md["occasion"])}'
         '<br>\n'
-        '<strong style="font-weight:700 !important;">[구매 전 꼭 확인해 주세요]</strong><br>\n'
-        f'{join_lines(md["purchase_note"])}'
-        '<br>\n'
-        f'{join_lines(md["ending"])}\n'
         '</p></div>'
     )
-
 
 def assemble_final_output(data: Dict[str, str], structured: Dict[str, Any]) -> str:
     material_items = [x.strip() for x in (data['material'] or '').split('+') if x.strip()]
@@ -775,7 +860,7 @@ with ncol2:
             with st.spinner("상품명을 생성 중입니다..."):
                 try:
                     response = chat_with_retry(
-                        model="gpt-4.1",
+                        model="gpt-4o",
                         messages=[
                             {"role": "system", "content": NAME_PROMPT},
                             {"role": "user", "content": naming_input},
