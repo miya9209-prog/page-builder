@@ -181,7 +181,7 @@ def wrap_text_source(text: str) -> str:
     return '<br>\n'.join(_natural_wrap(text, 18, 30))
 def wrap_md(text: str) -> str:
     return '<br>\n'.join(_natural_wrap(text, 16, 24))
-def line: str) -> str:
+def to_noun(line: str) -> str:
     s = re.sub(r'\s+', ' ', (line or '').strip())
     s = s.strip("\"“”' " )
     s = s.rstrip('. ')
@@ -705,7 +705,7 @@ def build_subtap_html(data: Dict[str, str], material_desc_lines: List[str]) -> s
 
 
 def render_text_source(structured: Dict[str, Any]) -> str:
-    rec_lines = ''.join([f"▪ {tidy_wrapped_html(wrap_text_source(x)))}<br>\n" for x in structured['recommend_lines']])
+    rec_lines = ''.join([f"▪ {tidy_wrapped_html(wrap_text_source(to_noun(x)))}<br>\n" for x in structured['recommend_lines']])
     review_lines = ''.join([f'"{tidy_wrapped_html(wrap_text_source(sanitize_review_text(x)))}"<br>\n' for x in structured['review_lines']])
     faq_lines = []
     for idx, faq in enumerate(structured['faqs']):
