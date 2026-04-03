@@ -1,16 +1,3 @@
-
-def sanitize_review_text(x):
-    return x.replace('"','').strip()
-
-def strip_q_prefix(x):
-    return x.replace("Q.","").strip()
-
-def strip_a_prefix(x):
-    return x.replace("A.","").strip()
-
-def clean_line(x):
-    return x.strip()
-
 import base64
 import io
 import json
@@ -638,39 +625,16 @@ def build_subtap_html(data: Dict[str, str], material_desc_lines: List[str]) -> s
 </div>"""
 
 
-
-def render_text_source(structured):
-
-    def fix_recommend(x):
-        x = x.strip()
-        x = re.sub(r'(추천드립니다|추천합니다|좋습니다|잘 어울립니다|만족하실|가능합니다)', '', x)
-
-        if "찾" in x:
-            x = x.replace("찾으시는", "찾으시는 분")
-        elif "원하" in x:
-            x = x.replace("원하시는", "원하시는 분")
-        elif "싶" in x:
-            x = x.replace("싶은", "싶으신 분")
-        else:
-            if not x.endswith("분"):
-                x += " 분"
-
-        return x.strip().rstrip(".")
-
-    rec_lines = ''.join([ "▪ " + fix_recommend(x) + "<br>\n" for x in structured['recommend_lines'] ])
-
-    review_lines = ''.join([ '"' + sanitize_review_text(x) + '"<br>\n' for x in structured['review_lines'] ])
-
+def render_text_source(structured: Dict[str, Any]) -> str:
+    rec_lines = ''.join([f'▪ {x}<br>\n' for x in structured['recommend_lines']])
+    review_lines = ''.join([f'{x}<br>\n' for x in structured['review_lines']])
     faq_lines = []
     for idx, faq in enumerate(structured['faqs']):
-        q = strip_q_prefix(faq['q'])
-        a = strip_a_prefix(faq['a'])
-        faq_lines.append("Q. " + q + "<br>\n")
-        faq_lines.append("A. " + a + "<br>\n")
+        faq_lines.append(f"{faq['q']}<br>\n")
+        faq_lines.append(f"{faq['a']}<br>\n")
         if idx < len(structured['faqs']) - 1:
             faq_lines.append("<br>\n")
-
-    shopping_lines = ''.join([ "▪ " + clean_line(x) + "<br>\n" for x in structured['shopping_lines'] ])
+    shopping_lines = ''.join([f'▪ {x}<br>\n' for x in structured['shopping_lines'][:-1]]) + f'▪ {structured["shopping_lines"][-1]}'
 
     return (
         '<div style="text-align:center;">\n'
@@ -678,7 +642,7 @@ def render_text_source(structured):
         '✓ 이런 분께 추천해요!</h3>\n'
         '<br>\n'
         '<p><span style="font-size:14px; line-height:1.8;">\n'
-        + rec_lines +
+        f'{rec_lines}'
         '</span></p></div>\n'
         '<br><br><br><br>\n\n'
         '<div style="text-align:center;">\n'
@@ -686,7 +650,7 @@ def render_text_source(structured):
         '✓ 미리 입어 본 착용후기 (모델/스텝/MD리뷰)</h3>\n'
         '<br>\n'
         '<p><span style="font-size:14px; line-height:1.8;">\n'
-        + review_lines +
+        f'{review_lines}'
         '</span></p></div>\n'
         '<br><br><br>\n\n'
         '<div style="text-align:center;">\n'
@@ -694,17 +658,19 @@ def render_text_source(structured):
         '✓ (FAQ) 이 상품, 이게 궁금해요!</h3>\n'
         '<br>\n'
         '<p><span style="font-size:14px; line-height:1.4;">\n'
-        + ''.join(faq_lines) +
+        f'{"".join(faq_lines)}'
         '</span></p></div>\n'
         '<br><br><br><br>\n\n'
         '<div style="text-align:center;">\n'
         '<h3 style="margin-bottom:0;">\n'
-        '✓ 쇼핑에 꼭 참고하세요</h3>\n'
+        '✓쇼핑에 꼭 참고하세요</h3>\n'
         '<br>\n'
         '<p><span style="font-size:14px; line-height:1.8;">\n'
-        + shopping_lines +
+        f'{shopping_lines}\n'
         '</span></p></div>\n'
+        '<br><br><br>'
     )
+
 
 def render_subsc_html(data: Dict[str, str], structured: Dict[str, Any]) -> str:
     md = structured['md_sections']
