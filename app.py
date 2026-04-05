@@ -243,6 +243,33 @@ def build_generation_prompt(data, additional_request):
         "[구매 전 꼭 확인해 주세요] 섹션은 절대 작성하지 않는다.\n"
         "마무리 감성 문장은 작성하지 않는다.\n"
         "MD원고는 choice / fabric / fit / occasion 4개 섹션만 작성한다.\n\n"
+        "[MD원고 문장 스타일 - 매우 중요]\n"
+        "각 섹션의 문장은 짧은 단문을 나열하지 말고, 자연스럽게 이어지는 흐름으로 작성한다.\n"
+        "한 줄은 15~25자 내외로, 의미가 연결되는 곳에서 자연스럽게 줄바꿈한다.\n"
+        "아래 올바른 예시 스타일로 작성한다:\n\n"
+        "  [올바른 예시 - choice 섹션]\n"
+        "  '미샵의 브랜드 납품의 고급 공정 파트너사 상품,'\n"
+        "  '그만큼 자신있는 고퀄리티 상품입니다.'\n"
+        "  '원단에서 입어서의 편안함까지'\n"
+        "  '브랜드급의 매력적인 자켓입니다.'\n\n"
+        "  [올바른 예시 - fabric 섹션]\n"
+        "  '겉감과 안감 모두 폴리에스터 100% 소재로'\n"
+        "  '가볍고 내구성이 뛰어납니다.'\n"
+        "  '구김이 적고 형태가 잘 유지되어'\n"
+        "  '오랜 기간 깔끔하게 착용할 수 있습니다.'\n\n"
+        "  [올바른 예시 - fit 섹션]\n"
+        "  'FREE 사이즈로 77까지 추천드리며'\n"
+        "  '여유로운 핏으로 체형 구애 없이 착용 가능합니다.'\n"
+        "  '힙을 덮는 기장과 적당한 품으로'\n"
+        "  '편안하게 입으실 수 있습니다.'\n\n"
+        "  [올바른 예시 - occasion 섹션]\n"
+        "  '오피스룩, 모임, 데일리 외출 등'\n"
+        "  '격식 있는 자리부터 편안한 일상까지'\n"
+        "  '다양하게 활용할 수 있는 아이템입니다.'\n"
+        "  '시즌에 구애 없이 자주 손이 가는 아이템입니다.'\n\n"
+        "  [금지 스타일 - 이렇게 쓰지 말 것]\n"
+        "  '이 블라우스는 어떤 하의와도 매치가 쉬워 다양한 스타일링이 가능합니다.' (한 줄에 너무 긴 문장)\n"
+        "  '여유 있는 핏으로 체형 커버가 용이하며, 깔끔한 실루엣을 연출합니다.' (이어 붙인 문장)\n\n"
         "[입력 데이터]\n"
         f"- 상품명: {data['display_name']}\n"
         f"- 컬러: {data['color']}\n"
@@ -270,18 +297,18 @@ def build_generation_prompt(data, additional_request):
         '  ],\n'
         '  "shopping_lines": ["참고사항1", "참고사항2", "참고사항3"],\n'
         '  "md_sections": {\n'
-        '    "choice": ["문장1", "문장2", "문장3", "문장4"],\n'
-        '    "fabric": ["문장1", "문장2", "문장3", "문장4"],\n'
-        '    "fit": ["문장1", "문장2", "문장3", "문장4"],\n'
-        '    "occasion": ["문장1", "문장2", "문장3", "문장4"],\n'
+        '    "choice": ["줄1", "줄2", "줄3", "줄4", "줄5", "줄6"],\n'
+        '    "fabric": ["줄1", "줄2", "줄3", "줄4", "줄5", "줄6"],\n'
+        '    "fit": ["줄1", "줄2", "줄3", "줄4", "줄5", "줄6"],\n'
+        '    "occasion": ["줄1", "줄2", "줄3", "줄4", "줄5", "줄6"],\n'
         '    "purchase_note": [],\n'
         '    "ending": []\n'
         '  },\n'
         '  "size_tips": {\n'
-        '    "55": "한 문장.",\n'
-        '    "66": "한 문장.",\n'
-        '    "66half": "한 문장.",\n'
-        '    "77": "한 문장."\n'
+        '    "55": ["체형 착용 특징 첫 문장.", "구체적인 핏·실루엣 설명 둘째 문장."],\n'
+        '    "66": ["체형 착용 특징 첫 문장.", "구체적인 핏·실루엣 설명 둘째 문장."],\n'
+        '    "66half": ["체형 착용 특징 첫 문장.", "구체적인 핏·실루엣 설명 둘째 문장."],\n'
+        '    "77": ["체형 착용 특징 첫 문장.", "구체적인 핏·실루엣 설명 둘째 문장."]\n'
         '  }\n'
         "}\n\n"
         "[각 항목 작성 기준]\n"
@@ -290,11 +317,13 @@ def build_generation_prompt(data, additional_request):
         "- review_lines: 실제 스텝이 말할 법한 자연스러운 후기 4줄. 따옴표 없이 문장만.\n"
         "- faqs: q는 Q.로 시작, a는 A.로 시작. 구체적이고 실용적인 고객 질문 4개.\n"
         "- shopping_lines: 실용 정보 3줄 (사이즈, 컬러별 주의, 관리방법 등).\n"
-        "- md_sections.choice: 이 상품을 선택해야 하는 이유를 설득형으로 4줄.\n"
-        "- md_sections.fabric: 소재와 두께감 설명 4줄.\n"
-        "- md_sections.fit: 체형, 실루엣, 사이즈 선택 가이드 4줄.\n"
-        "- md_sections.occasion: 언제 어떻게 입는지 장면 중심 4줄.\n"
-        "- size_tips: 55/66/66half/77 각 체형별 착용감 한 문장.\n"
+        "- md_sections.choice: 이 상품을 선택해야 하는 이유. 자연스럽게 이어지는 4~6줄. 한 줄 15~25자.\n"
+        "- md_sections.fabric: 소재와 두께감. 자연스럽게 이어지는 4~6줄. 한 줄 15~25자.\n"
+        "- md_sections.fit: 체형, 사이즈 가이드, 실루엣. 자연스럽게 이어지는 4~6줄. 한 줄 15~25자.\n"
+        "- md_sections.occasion: 착용 장면과 코디 활용. 자연스럽게 이어지는 4~6줄. 한 줄 15~25자.\n"
+        "- size_tips: 각 체형별 2문장. 첫 문장은 착용감·핏 특징, 둘째 문장은 실루엣·커버 효과.\n"
+        "  예시) 55: ['여유 있는 핏으로 루즈하게 연출됩니다.', '소매와 어깨가 자연스럽게 떨어져 여리여리한 실루엣이 살아납니다.']\n"
+        "  예시) 77: ['상체가 크거나 군살이 있으신 분도 드라마틱한 체형 커버 효과를 느끼실 수 있습니다.', '적당히 여유 있는 핏으로 깔끔하게 연출됩니다.']\n"
     )
     return prompt
 
@@ -393,10 +422,22 @@ def fallback_structured(data):
             "ending": [],
         },
         "size_tips": {
-            "55": "전체적으로 여유 있는 느낌으로 떨어져 단독 착용 시에도 부담 없이 활용하기 좋습니다.",
-            "66": "품과 실루엣이 가장 안정감 있게 정리되어 데일리부터 모임룩까지 자연스럽게 이어집니다.",
-            "66half": "상체를 비교적 편안하게 감싸주어 체형 고민을 덜고 입기 좋습니다.",
-            "77": "답답하게 조이지 않고 여유 있게 착용 가능하여 실측 확인 후 선택하시면 만족도가 높습니다.",
+            "55": [
+                "전체적으로 여유 있는 느낌으로 떨어져 단독 착용 시에도 부담 없이 활용하기 좋습니다.",
+                "소매와 어깨가 자연스럽게 떨어져 여리여리한 실루엣이 살아납니다.",
+            ],
+            "66": [
+                "품과 실루엣이 안정감 있게 정리되어 데일리부터 모임룩까지 자연스럽게 이어집니다.",
+                "전체적으로 넉넉한 품으로 상체 군살 커버에 탁월하며 힙을 살짝 덮는 기장감으로 부담 없습니다.",
+            ],
+            "66half": [
+                "상체를 비교적 편안하게 감싸주어 체형 고민을 덜고 입기 좋습니다.",
+                "팔과 어깨가 넓은 체형도 불편함 없이 편안하게 착용되며 슬림한 라인이 연출됩니다.",
+            ],
+            "77": [
+                "답답하게 조이지 않고 여유 있게 착용 가능하여 실측 확인 후 선택하시면 만족도가 높습니다.",
+                "상체가 크거나 군살이 있으신 분도 드라마틱한 체형 커버 효과를 느끼실 수 있습니다.",
+            ],
         },
     }
 
@@ -481,20 +522,39 @@ def normalize_generated(result, data):
 
     md_raw = result.get("md_sections") if isinstance(result.get("md_sections"), dict) else {}
     md_sections = {
-        "choice": [ensure_period(x) for x in safe_lines(md_raw.get("choice"), 4, fb["md_sections"]["choice"])],
-        "fabric": [ensure_period(x) for x in safe_lines(md_raw.get("fabric"), 4, fb["md_sections"]["fabric"])],
-        "fit": [ensure_period(x) for x in safe_lines(md_raw.get("fit"), 4, fb["md_sections"]["fit"])],
-        "occasion": [ensure_period(x) for x in safe_lines(md_raw.get("occasion"), 4, fb["md_sections"]["occasion"])],
+        "choice": [ensure_period(x) for x in safe_lines(md_raw.get("choice"), 6, fb["md_sections"]["choice"])],
+        "fabric": [ensure_period(x) for x in safe_lines(md_raw.get("fabric"), 6, fb["md_sections"]["fabric"])],
+        "fit": [ensure_period(x) for x in safe_lines(md_raw.get("fit"), 6, fb["md_sections"]["fit"])],
+        "occasion": [ensure_period(x) for x in safe_lines(md_raw.get("occasion"), 6, fb["md_sections"]["occasion"])],
         "purchase_note": [],  # 항상 비어 있어야 함
         "ending": [],         # 항상 비어 있어야 함
     }
 
     tips_raw = result.get("size_tips") if isinstance(result.get("size_tips"), dict) else {}
+
+    def normalize_tip(val, fallback_val):
+        """size_tips 값이 문자열이든 배열이든 2개 문장 리스트로 정규화."""
+        if isinstance(val, list) and val:
+            lines = [ensure_period(clean_line(x)) for x in val if clean_line(x)]
+            if not lines:
+                lines = fallback_val if isinstance(fallback_val, list) else [ensure_period(fallback_val)]
+            return lines[:2] if len(lines) >= 2 else lines
+        if isinstance(val, str) and val.strip():
+            # 문자열이면 마침표 기준으로 분리 시도
+            parts = re.split(r"\.\s+", ensure_period(clean_line(val)))
+            parts = [p.strip() for p in parts if p.strip()]
+            parts = [p if p.endswith(".") else p + "." for p in parts]
+            return parts[:2] if len(parts) >= 2 else parts
+        # 폴백
+        if isinstance(fallback_val, list):
+            return fallback_val
+        return [ensure_period(fallback_val)]
+
     size_tips = {
-        "55": ensure_period(tips_raw.get("55", fb["size_tips"]["55"])),
-        "66": ensure_period(tips_raw.get("66", fb["size_tips"]["66"])),
-        "66half": ensure_period(tips_raw.get("66half", fb["size_tips"]["66half"])),
-        "77": ensure_period(tips_raw.get("77", fb["size_tips"]["77"])),
+        "55":     normalize_tip(tips_raw.get("55"),     fb["size_tips"]["55"]),
+        "66":     normalize_tip(tips_raw.get("66"),     fb["size_tips"]["66"]),
+        "66half": normalize_tip(tips_raw.get("66half"), fb["size_tips"]["66half"]),
+        "77":     normalize_tip(tips_raw.get("77"),     fb["size_tips"]["77"]),
     }
 
     return {
@@ -718,16 +778,20 @@ def assemble_final_output(data, structured):
     lines.append("-----------------")
     lines.append("")
     lines.append("ㅇ55 (90) 160cm 48kg")
-    lines.append(structured["size_tips"]["55"])
+    for s in structured["size_tips"]["55"]:
+        lines.append(s)
     lines.append("")
     lines.append("ㅇ66 (95) 165cm 54kg")
-    lines.append(structured["size_tips"]["66"])
+    for s in structured["size_tips"]["66"]:
+        lines.append(s)
     lines.append("")
     lines.append("ㅇ66반 (95) 164cm 58kg")
-    lines.append(structured["size_tips"]["66half"])
+    for s in structured["size_tips"]["66half"]:
+        lines.append(s)
     lines.append("")
     lines.append("ㅇ77 (100) 163cm 61kg")
-    lines.append(structured["size_tips"]["77"])
+    for s in structured["size_tips"]["77"]:
+        lines.append(s)
     return "\n".join(lines).strip()
 
 
