@@ -133,13 +133,22 @@ def apply_color_count_to_name(product_name, color_text):
 def clean_line(line):
     line = (line or "").strip()
     line = re.sub(r"^[\-\u2022\u25aa\u29bf\s]+", "", line)
-    return re.sub(r"\s+", " ", line).strip()
+    line = re.sub(r"\s+", " ", line).strip()
+    # ",." 중복 패턴 정리
+    line = re.sub(r",\.+", ".", line)
+    return line
 
 
 def ensure_period(line):
+    """마침표로 끝나게 보장. 쉼표/쉼표+마침표로 끝나는 경우도 정리."""
     line = clean_line(line)
     if not line:
         return ""
+    # 쉼표+마침표 중복 제거: ",." → "."
+    line = re.sub(r",\.+$", ".", line)
+    # 쉼표로만 끝나는 경우: 쉼표 제거 후 마침표
+    if line.endswith(","):
+        line = line[:-1].rstrip()
     if re.search(r"[.!?\u2026]$", line):
         return line
     return line + "."
@@ -270,7 +279,7 @@ def build_generation_prompt(data, additional_request):
         "다양하게 활용할 수 있는 아이템입니다.\n"
         "시즌에 구애 없이 자주 손이 가는 아이템입니다.\n"
         "</style_guide>\n\n"
-        "[금지] 한 줄에 두 문장을 쉼표·접속어로 이어 붙이지 않는다. 한 줄에 30자 초과 금지.\n\n"
+        "[금지] 한 줄에 두 문장을 쉼표·접속어로 이어 붙이지 않는다. 한 줄에 30자 초과 금지.\n""[금지] 줄 끝을 쉼표(,)로 절대 끝내지 않는다. 연결되는 줄이라도 쉼표 없이 자연스럽게 끊는다.\n""  예) 금지: 가볍고 내구성이 뛰어나며,  →  허용: 가볍고 내구성이 뛰어나\n""[금지] 마침표와 쉼표가 함께 붙는 문장 금지. 예) 블라우스로,. → 블라우스입니다.\n\n"
         "[입력 데이터]\n"
         f"- 상품명: {data['display_name']}\n"
         f"- 컬러: {data['color']}\n"
@@ -367,7 +376,10 @@ def generate_structured_copy(data, additional_request, uploaded_images):
                 "content": (
                     "반드시 JSON만 출력한다. 없는 디테일은 추정하지 않는다. "
                     "recommend_lines는 반드시 '~분' 또는 '~분.'으로 끝나는 형태로만 생성한다. "
-                    "추천합니다, 권해드립니다, 적합합니다, 분께 같은 표현은 절대 사용하지 않는다."
+                    "추천합니다, 권해드립니다, 적합합니다, 분께 같은 표현은 절대 사용하지 않는다. "
+                    "md_sections의 각 배열 줄은 절대 쉼표(,)로 끝내지 않는다. "
+                    "'블라우스로,' '뛰어나며,' '소재로,' 처럼 쉼표로 끝나는 줄은 완전히 금지한다. "
+                    "줄이 다음 줄과 문맥상 이어지더라도 쉼표 없이 자연스럽게 끊거나 완결 문장으로 쓴다."
                 ),
             },
             {"role": "user", "content": user_content},
@@ -535,7 +547,17 @@ def safe_lines(raw, count, fallback):
 
 def safe_md_lines(raw, fallback):
     """MD원고 전용: LLM이 생성한 줄만 사용. 아예 없을 때만 폴백 전체 사용. 폴백 혼합 없음."""
-    items = [clean_line(x) for x in (raw if isinstance(raw, list) else []) if clean_line(x)]
+    def fix_md_line(x):
+        x = clean_line(x)
+        # 쉼표로 끝나는 줄: 쉼표 제거 (다음 줄과 이어지는 연결줄은 마침표 없이 그대로)
+        if x.endswith(","):
+            x = x[:-1].rstrip()
+        # ",." 중복 패턴 제거
+        x = re.sub(r",\.+$", ".", x)
+        return x
+
+    items = [fix_md_line(x) for x in (raw if isinstance(raw, list) else []) if clean_line(x)]
+    items = [x for x in items if x]  # 빈 줄 제거
     if not items:
         return [clean_line(x) for x in fallback if clean_line(x)]
     return items
@@ -552,11 +574,11 @@ def normalize_generated(result, data):
 
     md_raw = result.get("md_sections") if isinstance(result.get("md_sections"), dict) else {}
     md_sections = {
-        # safe_md_lines: LLM 생성 줄만 사용, 폴백과 절대 혼합하지 않음
-        "choice":  [ensure_period(x) for x in safe_md_lines(md_raw.get("choice"),  fb["md_sections"]["choice"])],
-        "fabric":  [ensure_period(x) for x in safe_md_lines(md_raw.get("fabric"),  fb["md_sections"]["fabric"])],
-        "fit":     [ensure_period(x) for x in safe_md_lines(md_raw.get("fit"),     fb["md_sections"]["fit"])],
-        "occasion":[ensure_period(x) for x in safe_md_lines(md_raw.get("occasion"),fb["md_sections"]["occasion"])],
+        # safe_md_lines: LLM 생성 줄만 사용, 쉼표 끝 정리 포함. ensure_period 미적용(연결줄 보존)
+        "choice":   safe_md_lines(md_raw.get("choice"),   fb["md_sections"]["choice"]),
+        "fabric":   safe_md_lines(md_raw.get("fabric"),   fb["md_sections"]["fabric"]),
+        "fit":      safe_md_lines(md_raw.get("fit"),      fb["md_sections"]["fit"]),
+        "occasion": safe_md_lines(md_raw.get("occasion"), fb["md_sections"]["occasion"]),
         "purchase_note": [],
         "ending": [],
     }
