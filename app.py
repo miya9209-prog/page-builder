@@ -116,9 +116,20 @@ def combine_measurements(top, bottom, dress):
 def count_colors(color_text):
     if not color_text.strip():
         return 0
+    # 슬래시·쉼표로 먼저 분리
     text = color_text.replace(" / ", "\n").replace("/", "\n").replace(",", "\n")
-    parts = [re.sub(r"^\s*\d+\s*", "", p).strip() for p in text.splitlines()]
-    return len([p for p in parts if p])
+    result = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # "1 블랙 2 네이비 3 베이지" 처럼 숫자가 구분자인 경우 각각 분리
+        sub = re.split(r"(?=\s*\d+\s+[가-힣a-zA-Z])", line)
+        for s in sub:
+            s = re.sub(r"^\s*\d+\s*", "", s).strip()
+            if s:
+                result.append(s)
+    return len(result) if result else 0
 
 
 def apply_color_count_to_name(product_name, color_text):
