@@ -246,30 +246,31 @@ def build_generation_prompt(data, additional_request):
         "[MD원고 문장 스타일 - 매우 중요]\n"
         "각 섹션의 문장은 짧은 단문을 나열하지 말고, 자연스럽게 이어지는 흐름으로 작성한다.\n"
         "한 줄은 15~25자 내외로, 의미가 연결되는 곳에서 자연스럽게 줄바꿈한다.\n"
-        "아래 올바른 예시 스타일로 작성한다:\n\n"
-        "  [올바른 예시 - choice 섹션]\n"
-        "  '미샵의 브랜드 납품의 고급 공정 파트너사 상품,'\n"
-        "  '그만큼 자신있는 고퀄리티 상품입니다.'\n"
-        "  '원단에서 입어서의 편안함까지'\n"
-        "  '브랜드급의 매력적인 자켓입니다.'\n\n"
-        "  [올바른 예시 - fabric 섹션]\n"
-        "  '겉감과 안감 모두 폴리에스터 100% 소재로'\n"
-        "  '가볍고 내구성이 뛰어납니다.'\n"
-        "  '구김이 적고 형태가 잘 유지되어'\n"
-        "  '오랜 기간 깔끔하게 착용할 수 있습니다.'\n\n"
-        "  [올바른 예시 - fit 섹션]\n"
-        "  'FREE 사이즈로 77까지 추천드리며'\n"
-        "  '여유로운 핏으로 체형 구애 없이 착용 가능합니다.'\n"
-        "  '힙을 덮는 기장과 적당한 품으로'\n"
-        "  '편안하게 입으실 수 있습니다.'\n\n"
-        "  [올바른 예시 - occasion 섹션]\n"
-        "  '오피스룩, 모임, 데일리 외출 등'\n"
-        "  '격식 있는 자리부터 편안한 일상까지'\n"
-        "  '다양하게 활용할 수 있는 아이템입니다.'\n"
-        "  '시즌에 구애 없이 자주 손이 가는 아이템입니다.'\n\n"
-        "  [금지 스타일 - 이렇게 쓰지 말 것]\n"
-        "  '이 블라우스는 어떤 하의와도 매치가 쉬워 다양한 스타일링이 가능합니다.' (한 줄에 너무 긴 문장)\n"
-        "  '여유 있는 핏으로 체형 커버가 용이하며, 깔끔한 실루엣을 연출합니다.' (이어 붙인 문장)\n\n"
+        "문장은 자연스러운 구어체로 완성한다. 명사형으로 끝낼 필요는 없으며, 서술형·접속형 모두 허용한다.\n"
+        "아래 <style_guide> 안의 예시는 스타일 참고용이다. 이 문장들을 그대로 출력에 포함하지 않는다.\n\n"
+        "<style_guide>\n"
+        "[choice 예시]\n"
+        "미샵의 브랜드 납품의 고급 공정 파트너사 상품,\n"
+        "그만큼 자신있는 고퀄리티 상품입니다.\n"
+        "원단에서 입어서의 편안함까지\n"
+        "브랜드급의 매력적인 블라우스입니다.\n\n"
+        "[fabric 예시]\n"
+        "겉감과 안감 모두 폴리에스터 100% 소재로\n"
+        "가볍고 내구성이 뛰어납니다.\n"
+        "구김이 적고 형태가 잘 유지되어\n"
+        "오랜 기간 깔끔하게 착용할 수 있습니다.\n\n"
+        "[fit 예시]\n"
+        "FREE 사이즈로 77까지 추천드리며\n"
+        "여유로운 핏으로 체형 구애 없이 착용 가능합니다.\n"
+        "힙을 덮는 기장과 적당한 품으로\n"
+        "편안하게 입으실 수 있습니다.\n\n"
+        "[occasion 예시]\n"
+        "오피스룩, 모임, 데일리 외출 등\n"
+        "격식 있는 자리부터 편안한 일상까지\n"
+        "다양하게 활용할 수 있는 아이템입니다.\n"
+        "시즌에 구애 없이 자주 손이 가는 아이템입니다.\n"
+        "</style_guide>\n\n"
+        "[금지] 한 줄에 두 문장을 쉼표·접속어로 이어 붙이지 않는다. 한 줄에 30자 초과 금지.\n\n"
         "[입력 데이터]\n"
         f"- 상품명: {data['display_name']}\n"
         f"- 컬러: {data['color']}\n"
@@ -520,6 +521,7 @@ def normalize_faq(faq_raw, fallback):
 
 
 def safe_lines(raw, count, fallback):
+    """일반 필드용: LLM 결과가 count보다 부족하면 폴백으로 보충."""
     items = [clean_line(x) for x in (raw if isinstance(raw, list) else []) if clean_line(x)]
     if len(items) < count:
         for fb in fallback:
@@ -529,6 +531,14 @@ def safe_lines(raw, count, fallback):
             if len(items) >= count:
                 break
     return items[:count]
+
+
+def safe_md_lines(raw, fallback):
+    """MD원고 전용: LLM이 생성한 줄만 사용. 아예 없을 때만 폴백 전체 사용. 폴백 혼합 없음."""
+    items = [clean_line(x) for x in (raw if isinstance(raw, list) else []) if clean_line(x)]
+    if not items:
+        return [clean_line(x) for x in fallback if clean_line(x)]
+    return items
 
 
 def normalize_generated(result, data):
@@ -542,12 +552,13 @@ def normalize_generated(result, data):
 
     md_raw = result.get("md_sections") if isinstance(result.get("md_sections"), dict) else {}
     md_sections = {
-        "choice": [ensure_period(x) for x in safe_lines(md_raw.get("choice"), 6, fb["md_sections"]["choice"])],
-        "fabric": [ensure_period(x) for x in safe_lines(md_raw.get("fabric"), 6, fb["md_sections"]["fabric"])],
-        "fit": [ensure_period(x) for x in safe_lines(md_raw.get("fit"), 6, fb["md_sections"]["fit"])],
-        "occasion": [ensure_period(x) for x in safe_lines(md_raw.get("occasion"), 6, fb["md_sections"]["occasion"])],
-        "purchase_note": [],  # 항상 비어 있어야 함
-        "ending": [],         # 항상 비어 있어야 함
+        # safe_md_lines: LLM 생성 줄만 사용, 폴백과 절대 혼합하지 않음
+        "choice":  [ensure_period(x) for x in safe_md_lines(md_raw.get("choice"),  fb["md_sections"]["choice"])],
+        "fabric":  [ensure_period(x) for x in safe_md_lines(md_raw.get("fabric"),  fb["md_sections"]["fabric"])],
+        "fit":     [ensure_period(x) for x in safe_md_lines(md_raw.get("fit"),     fb["md_sections"]["fit"])],
+        "occasion":[ensure_period(x) for x in safe_md_lines(md_raw.get("occasion"),fb["md_sections"]["occasion"])],
+        "purchase_note": [],
+        "ending": [],
     }
 
     tips_raw = result.get("size_tips") if isinstance(result.get("size_tips"), dict) else {}
