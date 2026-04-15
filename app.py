@@ -8,6 +8,7 @@ from typing import Any, Dict, List
 
 import streamlit as st
 from docx import Document
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt
 from openai import OpenAI, RateLimitError
@@ -187,6 +188,22 @@ def format_material_line(material):
     return mat
 
 
+
+def add_blue_divider(doc):
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(6)
+    p.paragraph_format.line_spacing = 1.0
+    pPr = p._p.get_or_add_pPr()
+    pBdr = OxmlElement('w:pBdr')
+    bottom = OxmlElement('w:bottom')
+    bottom.set(qn('w:val'), 'single')
+    bottom.set(qn('w:sz'), '18')
+    bottom.set(qn('w:space'), '1')
+    bottom.set(qn('w:color'), '2F6DF6')
+    pBdr.append(bottom)
+    pPr.append(pBdr)
+
 def result_to_docx_bytes(result_text):
     doc = Document()
     style = doc.styles["Normal"]
@@ -197,6 +214,8 @@ def result_to_docx_bytes(result_text):
     style.paragraph_format.space_after = Pt(0)
     style.paragraph_format.line_spacing = 1.5
     for line in result_text.splitlines():
+        if "✓ (FAQ)" in line:
+            add_blue_divider(doc)
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(0)
@@ -373,6 +392,8 @@ def build_generation_prompt(data, additional_request):
         "- md_sections.fit: 체형·사이즈·실루엣. 한 줄 15~25자, 최대 6줄. 의미가 이어지면 다음 줄로 나눈다.\n"
         "- md_sections.occasion: 착용 장면·코디. 한 줄 15~25자, 최대 6줄. 의미가 이어지면 다음 줄로 나눈다.\n"
         "- size_tips: 각 체형별 2문장. 첫 문장은 착용감·핏 특징, 둘째 문장은 실루엣·커버 효과.\n"
+        "  작성 기준 체형 프로필: 55 (90) 160cm 50kg / 66 (95) 162cm 55kg / 66반 (95) 163cm 59kg / 77 (100) 161cm 62kg\n"
+        "  각 체형의 키·몸무게·사이즈 프로필에 맞춰 착용감과 핏을 다르게 써야 한다.\n"
         "  예시) 55: ['여유 있는 핏으로 루즈하게 연출됩니다.', '소매와 어깨가 자연스럽게 떨어져 여리여리한 실루엣이 살아납니다.']\n"
         "  예시) 77: ['상체가 크거나 군살이 있으신 분도 드라마틱한 체형 커버 효과를 느끼실 수 있습니다.', '적당히 여유 있는 핏으로 깔끔하게 연출됩니다.']\n"
     )
@@ -685,7 +706,7 @@ def render_text_source(structured):
         '<p><span style="font-size:14px; line-height:1.8;">\n'
         + rec_lines
         + "</span></p></div>\n"
-        "<br><br><br><br><br>\n\n"
+        "<br><br><br><br>\n\n"
         '<div style="text-align:center;">\n'
         '<h3 style="margin-bottom:0;">\n'
         "✓ 미리 입어 본 착용후기 (모델/스텝/MD리뷰)</h3>\n"
@@ -693,15 +714,15 @@ def render_text_source(structured):
         '<p><span style="font-size:14px; line-height:1.8;">\n'
         + review_lines
         + "</span></p></div>\n"
-        "<br><br><br><br>\n\n"
+        "<br><br><br>\n\n"
         '<div style="text-align:center;">\n'
         '<h3 style="margin-bottom:0;">\n'
-        "<br><br><span style='display:block;width:100%;height:2px;background:#2f6df6;'></span><br><br>✓ (FAQ)" 이 상품, 이게 궁금해요!</h3>\n"
+        "✓ (FAQ) 이 상품, 이게 궁금해요!</h3>\n"
         "<br>\n"
         '<p><span style="font-size:14px; line-height:1.4;">\n'
         + faq_lines
         + "</span></p></div>\n"
-        "<br><br><br><br><br>\n\n"
+        "<br><br><br><br>\n\n"
         '<div style="text-align:center;">\n'
         '<h3 style="margin-bottom:0;">\n'
         "✓쇼핑에 꼭 참고하세요</h3>\n"
@@ -709,7 +730,7 @@ def render_text_source(structured):
         '<p><span style="font-size:14px; line-height:1.8;">\n'
         + shopping_lines
         + "\n</span></p></div>\n"
-        "<br><br><br><br>"
+        "<br><br><br>"
     )
 
 
@@ -851,19 +872,19 @@ def assemble_final_output(data, structured):
     lines.append("사이즈 팁")
     lines.append("-----------------")
     lines.append("")
-    lines.append("ㅇ55 (90) 160cm 48kg")
+    lines.append("ㅇ55 (90) 160cm 50kg")
     for s in structured["size_tips"]["55"]:
         lines.append(s)
     lines.append("")
-    lines.append("ㅇ66 (95) 165cm 54kg")
+    lines.append("ㅇ66 (95) 162cm 55kg")
     for s in structured["size_tips"]["66"]:
         lines.append(s)
     lines.append("")
-    lines.append("ㅇ66반 (95) 164cm 58kg")
+    lines.append("ㅇ66반 (95) 163cm 59kg")
     for s in structured["size_tips"]["66half"]:
         lines.append(s)
     lines.append("")
-    lines.append("ㅇ77 (100) 163cm 61kg")
+    lines.append("ㅇ77 (100) 161cm 62kg")
     for s in structured["size_tips"]["77"]:
         lines.append(s)
     return "\n".join(lines).strip()
