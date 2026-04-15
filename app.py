@@ -10,7 +10,7 @@ import streamlit as st
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt
+from docx.shared import Pt, RGBColor
 from openai import OpenAI, RateLimitError
 
 st.set_page_config(page_title="PAGE BUILDER", layout="wide")
@@ -56,6 +56,29 @@ FIXED_HTML_HEAD = (
     '<link href="//spoqa.github.io/spoqa-han-sans/css/SpoqaHanSans-kr.css" rel="stylesheet" type="text/css">\n'
     '<link href="//misharp.co.kr/subtap.css" rel="stylesheet" type="text/css">'
 )
+
+
+DIVIDER_MARKER = "────────────────────────────────────────"
+
+def add_blue_divider(doc):
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(0)
+    p.paragraph_format.line_spacing = 1.0
+    pPr = p._p.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bottom = OxmlElement("w:bottom")
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), "12")
+    bottom.set(qn("w:space"), "1")
+    bottom.set(qn("w:color"), "2F6DF6")
+    pBdr.append(bottom)
+    pPr.append(pBdr)
+    run = p.add_run(" ")
+    run.font.name = "Dotum"
+    run._element.rPr.rFonts.set(qn("w:eastAsia"), "돋움")
+    run.font.size = Pt(10)
+
 
 NAME_PROMPT = (
     "너는 4050 여성 패션 쇼핑몰 미샵의 상품 네이밍 전문가다.\n"
@@ -189,21 +212,6 @@ def format_material_line(material):
 
 
 
-def add_blue_divider(doc):
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after = Pt(6)
-    p.paragraph_format.line_spacing = 1.0
-    pPr = p._p.get_or_add_pPr()
-    pBdr = OxmlElement('w:pBdr')
-    bottom = OxmlElement('w:bottom')
-    bottom.set(qn('w:val'), 'single')
-    bottom.set(qn('w:sz'), '18')
-    bottom.set(qn('w:space'), '1')
-    bottom.set(qn('w:color'), '2F6DF6')
-    pBdr.append(bottom)
-    pPr.append(pBdr)
-
 def result_to_docx_bytes(result_text):
     doc = Document()
     style = doc.styles["Normal"]
@@ -213,17 +221,28 @@ def result_to_docx_bytes(result_text):
     style.paragraph_format.space_before = Pt(0)
     style.paragraph_format.space_after = Pt(0)
     style.paragraph_format.line_spacing = 1.5
-    for line in result_text.splitlines():
-        if "✓ (FAQ)" in line:
-            add_blue_divider(doc)
+
+    def add_plain_paragraph(text=""):
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(0)
         p.paragraph_format.line_spacing = 1.5
-        run = p.add_run(line)
+        run = p.add_run(text)
         run.font.name = "Dotum"
         run._element.rPr.rFonts.set(qn("w:eastAsia"), "돋움")
         run.font.size = Pt(10)
+        return p
+
+    for line in result_text.splitlines():
+        if line.strip() == DIVIDER_MARKER:
+            add_plain_paragraph("")
+            add_plain_paragraph("")
+            add_blue_divider(doc)
+            add_plain_paragraph("")
+            add_plain_paragraph("")
+            continue
+        add_plain_paragraph(line)
+
     bio = io.BytesIO()
     doc.save(bio)
     bio.seek(0)
@@ -392,8 +411,6 @@ def build_generation_prompt(data, additional_request):
         "- md_sections.fit: 체형·사이즈·실루엣. 한 줄 15~25자, 최대 6줄. 의미가 이어지면 다음 줄로 나눈다.\n"
         "- md_sections.occasion: 착용 장면·코디. 한 줄 15~25자, 최대 6줄. 의미가 이어지면 다음 줄로 나눈다.\n"
         "- size_tips: 각 체형별 2문장. 첫 문장은 착용감·핏 특징, 둘째 문장은 실루엣·커버 효과.\n"
-        "  작성 기준 체형 프로필: 55 (90) 160cm 50kg / 66 (95) 162cm 55kg / 66반 (95) 163cm 59kg / 77 (100) 161cm 62kg\n"
-        "  각 체형의 키·몸무게·사이즈 프로필에 맞춰 착용감과 핏을 다르게 써야 한다.\n"
         "  예시) 55: ['여유 있는 핏으로 루즈하게 연출됩니다.', '소매와 어깨가 자연스럽게 떨어져 여리여리한 실루엣이 살아납니다.']\n"
         "  예시) 77: ['상체가 크거나 군살이 있으신 분도 드라마틱한 체형 커버 효과를 느끼실 수 있습니다.', '적당히 여유 있는 핏으로 깔끔하게 연출됩니다.']\n"
     )
@@ -498,20 +515,20 @@ def fallback_structured(data):
         },
         "size_tips": {
             "55": [
-                "전체적으로 여유 있는 느낌으로 떨어져 단독 착용 시에도 부담 없이 활용하기 좋습니다.",
-                "소매와 어깨가 자연스럽게 떨어져 여리여리한 실루엣이 살아납니다.",
+                "여유 있는 핏으로 루즈하지 않게 자연스럽게 떨어져 단정한 실루엣을 연출합니다.",
+                "소매와 어깨선이 부드럽게 정리되어 슬림한 체형에도 밋밋하지 않게 어울립니다.",
             ],
             "66": [
-                "품과 실루엣이 안정감 있게 정리되어 데일리부터 모임룩까지 자연스럽게 이어집니다.",
-                "전체적으로 넉넉한 품으로 상체 군살 커버에 탁월하며 힙을 살짝 덮는 기장감으로 부담 없습니다.",
+                "품과 실루엣에 적당한 여유가 있어 편안하게 착용하기 좋습니다.",
+                "힙을 덮는 기장과 안정감 있는 핏으로 체형 커버 효과를 자연스럽게 느끼실 수 있습니다.",
             ],
             "66half": [
-                "상체를 비교적 편안하게 감싸주어 체형 고민을 덜고 입기 좋습니다.",
-                "팔과 어깨가 넓은 체형도 불편함 없이 편안하게 착용되며 슬림한 라인이 연출됩니다.",
+                "상체를 편안하게 감싸주어 답답함 없이 착용하기 좋습니다.",
+                "어깨와 팔 라인이 자연스럽게 정리되어 군살을 부드럽게 커버해 줍니다.",
             ],
             "77": [
-                "답답하게 조이지 않고 여유 있게 착용 가능하여 실측 확인 후 선택하시면 만족도가 높습니다.",
-                "상체가 크거나 군살이 있으신 분도 드라마틱한 체형 커버 효과를 느끼실 수 있습니다.",
+                "상체에 여유가 필요한 체형도 편안하게 입을 수 있을 만큼 넉넉한 핏입니다.",
+                "가슴과 어깨가 있는 체형도 부해 보이지 않게 정돈된 실루엣으로 연출됩니다.",
             ],
         },
     }
