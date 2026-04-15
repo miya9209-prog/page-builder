@@ -689,8 +689,8 @@ def render_text_source(structured):
 
     faq_parts = []
     for idx, faq in enumerate(structured['faqs']):
-        q = strip_q_prefix(faq['q'])
-        a = strip_a_prefix(faq['a'])
+        q = faq['q'].replace("Q.", "").strip()
+        a = faq['a'].replace("A.", "").strip()
         faq_parts.append(f"Q. {q}<br>\n")
         faq_parts.append(f"A. {a}<br>\n")
         if idx < len(structured['faqs']) - 1:
