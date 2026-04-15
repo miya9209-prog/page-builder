@@ -685,7 +685,7 @@ def render_text_source(structured):
         '<p><span style="font-size:14px; line-height:1.8;">\n'
         + rec_lines
         + "</span></p></div>\n"
-        "<br><br><br><br>\n\n"
+        "<br><br><br><br><br>\n\n"
         '<div style="text-align:center;">\n'
         '<h3 style="margin-bottom:0;">\n'
         "✓ 미리 입어 본 착용후기 (모델/스텝/MD리뷰)</h3>\n"
@@ -693,15 +693,15 @@ def render_text_source(structured):
         '<p><span style="font-size:14px; line-height:1.8;">\n'
         + review_lines
         + "</span></p></div>\n"
-        "<br><br><br>\n\n"
+        "<br><br><br><br>\n\n"
         '<div style="text-align:center;">\n'
         '<h3 style="margin-bottom:0;">\n'
-        "✓ (FAQ) 이 상품, 이게 궁금해요!</h3>\n"
+        "<br><br><span style="display:block;width:100%;height:2px;background:#2f6df6;"></span><br><br>✓ (FAQ) 이 상품, 이게 궁금해요!</h3>\n"
         "<br>\n"
         '<p><span style="font-size:14px; line-height:1.4;">\n'
         + faq_lines
         + "</span></p></div>\n"
-        "<br><br><br><br>\n\n"
+        "<br><br><br><br><br>\n\n"
         '<div style="text-align:center;">\n'
         '<h3 style="margin-bottom:0;">\n'
         "✓쇼핑에 꼭 참고하세요</h3>\n"
@@ -709,7 +709,7 @@ def render_text_source(structured):
         '<p><span style="font-size:14px; line-height:1.8;">\n'
         + shopping_lines
         + "\n</span></p></div>\n"
-        "<br><br><br>"
+        "<br><br><br><br>"
     )
 
 
