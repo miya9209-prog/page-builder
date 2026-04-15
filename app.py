@@ -10,7 +10,7 @@ import streamlit as st
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
+from docx.shared import Pt
 from openai import OpenAI, RateLimitError
 
 st.set_page_config(page_title="PAGE BUILDER", layout="wide")
@@ -58,6 +58,7 @@ FIXED_HTML_HEAD = (
 )
 
 
+
 DIVIDER_MARKER = "────────────────────────────────────────"
 
 def add_blue_divider(doc):
@@ -78,7 +79,6 @@ def add_blue_divider(doc):
     run.font.name = "Dotum"
     run._element.rPr.rFonts.set(qn("w:eastAsia"), "돋움")
     run.font.size = Pt(10)
-
 
 NAME_PROMPT = (
     "너는 4050 여성 패션 쇼핑몰 미샵의 상품 네이밍 전문가다.\n"
@@ -247,7 +247,6 @@ def result_to_docx_bytes(result_text):
     doc.save(bio)
     bio.seek(0)
     return bio.getvalue()
-
 
 def reset_all():
     st.session_state.reset_nonce += 1
@@ -683,34 +682,24 @@ def normalize_generated(result, data):
 # ─────────────────────────────────────────────
 # HTML 렌더링
 # ─────────────────────────────────────────────
+
 def render_text_source(structured):
-    # 추천 — normalize_recommend_line 한 번 더 (이중 안전장치)
-    rec_lines = "".join(
-        "▪ " + normalize_recommend_line(x) + "<br>\n"
-        for x in structured["recommend_lines"]
-    )
+    rec_lines = ''.join([f"▪ {x}<br>\n" for x in structured['recommend_lines']])
+    review_lines = ''.join([f'"{x}"<br>\n' for x in structured['review_lines']])
 
-    # 후기 — 따옴표로 감싸기 (중복 없이)
-    review_lines = "".join(
-        '"' + normalize_review_line(x) + '"<br>\n'
-        for x in structured["review_lines"]
-    )
-
-    # FAQ — Q./A. 중복 방지
     faq_parts = []
-    for idx, faq in enumerate(structured["faqs"]):
-        q = re.sub(r"^Q\.\s*Q\.", "Q.", faq["q"].strip())
-        a = re.sub(r"^A\.\s*A\.", "A.", faq["a"].strip())
-        faq_parts.append(q + "<br>\n")
-        faq_parts.append(a + "<br>\n")
-        if idx < len(structured["faqs"]) - 1:
+    for idx, faq in enumerate(structured['faqs']):
+        q = strip_q_prefix(faq['q'])
+        a = strip_a_prefix(faq['a'])
+        faq_parts.append(f"Q. {q}<br>\n")
+        faq_parts.append(f"A. {a}<br>\n")
+        if idx < len(structured['faqs']) - 1:
             faq_parts.append("<br>\n")
     faq_lines = "".join(faq_parts)
 
-    # 쇼핑 참고
     items = structured["shopping_lines"]
     if items:
-        shopping_lines = "".join("▪ " + x + "<br>\n" for x in items[:-1])
+        shopping_lines = "".join([f"▪ {x}<br>\n" for x in items[:-1]])
         shopping_lines += "▪ " + items[-1]
     else:
         shopping_lines = ""
@@ -732,6 +721,7 @@ def render_text_source(structured):
         + review_lines
         + "</span></p></div>\n"
         "<br><br><br>\n\n"
+        + DIVIDER_MARKER + "\n\n"
         '<div style="text-align:center;">\n'
         '<h3 style="margin-bottom:0;">\n'
         "✓ (FAQ) 이 상품, 이게 궁금해요!</h3>\n"
@@ -749,7 +739,6 @@ def render_text_source(structured):
         + "\n</span></p></div>\n"
         "<br><br><br>"
     )
-
 
 def render_subsc_html(data, structured):
     """MD원고 — 4개 소제목만. purchase_note/ending 절대 포함 안 함."""
