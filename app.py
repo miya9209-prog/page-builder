@@ -696,7 +696,7 @@ def render_text_source(structured):
         "<br><br><br><br>\n\n"
         '<div style="text-align:center;">\n'
         '<h3 style="margin-bottom:0;">\n'
-        "<br><br><span style="display:block;width:100%;height:2px;background:#2f6df6;"></span><br><br>✓ (FAQ) 이 상품, 이게 궁금해요!</h3>\n"
+        "<br><br><span style='display:block;width:100%;height:2px;background:#2f6df6;'></span><br><br>✓ (FAQ)" 이 상품, 이게 궁금해요!</h3>\n"
         "<br>\n"
         '<p><span style="font-size:14px; line-height:1.4;">\n'
         + faq_lines
