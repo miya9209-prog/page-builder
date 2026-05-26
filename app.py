@@ -58,7 +58,6 @@ FIXED_HTML_HEAD = (
 )
 
 
-
 DIVIDER_MARKER = "────────────────────────────────────────"
 
 def add_blue_divider(doc):
@@ -697,13 +696,6 @@ def render_text_source(structured):
             faq_parts.append("<br>\n")
     faq_lines = "".join(faq_parts)
 
-    items = structured["shopping_lines"]
-    if items:
-        shopping_lines = "".join([f"▪ {x}<br>\n" for x in items[:-1]])
-        shopping_lines += "▪ " + items[-1]
-    else:
-        shopping_lines = ""
-
     return (
         '<div style="text-align:center;">\n'
         '<h3 style="margin-bottom:0;">\n'
@@ -729,15 +721,7 @@ def render_text_source(structured):
         '<p><span style="font-size:14px; line-height:1.4;">\n'
         + faq_lines
         + "</span></p></div>\n"
-        "<br><br><br><br>\n\n"
-        '<div style="text-align:center;">\n'
-        '<h3 style="margin-bottom:0;">\n'
-        "✓쇼핑에 꼭 참고하세요</h3>\n"
-        "<br>\n"
-        '<p><span style="font-size:14px; line-height:1.8;">\n'
-        + shopping_lines
-        + "\n</span></p></div>\n"
-        "<br><br><br>"
+        "<br><br><br><br>"
     )
 
 def render_subsc_html(data, structured):
