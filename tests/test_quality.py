@@ -30,7 +30,7 @@ def app_functions():
     from docx.shared import Pt
     from quality_engine import fact_report
     namespace = dict(json=json, io=io, re=re, TIP_PROFILES=TIP_PROFILES,
-                     fact_report=fact_report, check_quality=check_quality,
+                     fact_report=fact_report, check_quality=check_quality, check_structure=check_structure,
                      normalize_generated_strict=normalize_generated_strict,
                      natural_wrap=natural_wrap, Document=Document, OxmlElement=OxmlElement, qn=qn, Pt=Pt,
                      RateLimitError=RuntimeError, DIVIDER_MARKER="────────────────────────────────────────",
@@ -178,6 +178,103 @@ class RepoTests(unittest.TestCase):
         self.assertEqual(len(result['recommend_lines']),4)
         self.assertIn('탈부착', str(calls[0]['messages']))
         self.assertIn('recommend_lines', str(calls[1]['messages']))
+
+
+class QualityGateRegressionTests(unittest.TestCase):
+    """10/28 뽀글이 재킷 오류·비정상 검수 결과·입력란 공란 재현."""
+    @classmethod
+    def setUpClass(cls):
+        cls.f = app_functions()
+
+    def jacket_data(self):
+        return dict(
+            display_name='보송 뽀글 웜니트 자켓 (2 color)', color='베이지, 차콜',
+            size='FREE 사이즈로 77까지 추천드립니다.', material='폴리에스터100 (건조기 사용 금지)',
+            material_desc_raw='촘촘하게 결이 살아 있는 폴리에스터 100% 뽀글이 원단, 도톰한 볼륨감, 포근한 질감, 털 빠짐이 거의 없습니다.',
+            country='중국', measurement_lines=['어깨단면51 / 가슴둘레116 / 암홀둘레52 / 소매길이53 / 소매단둘레30 / 총길이58'],
+            detail_tip='', fit='', appeal_points='', etc='', target='4050 여성',
+            washing='드라이클리닝, 단독 울세탁, 손세탁 권장. 건조기 사용 금지',
+        )
+
+    def short_fit_draft(self, d):
+        draft = draft_for(product('블라우스'))
+        draft['md_sections']['fit'] = [
+            'FREE 사이즈로 77까지 추천합니다.',
+            '가슴둘레 116cm, 어깨단면 51cm로 표시되어 있습니다.',
+            '실측을 비교하여 착용할 사이즈를 선택해 주세요.',
+        ]
+        # 본 테스트는 구조/분량 오류를 재현한다. 다른 상품 용어는 QA에서는 참고하지 않는다.
+        return draft
+
+    def test_short_fit_no_longer_blocks_result(self):
+        d = self.jacket_data()
+        draft = self.short_fit_draft(d)
+        self.assertLess(sum(len(x) for x in draft['md_sections']['fit']),115)
+        self.assertFalse(check_structure(draft), check_structure(draft))
+        normalize_generated_strict(draft)
+        # 사진, 선택한 원고가 있어도 115자 문턱에서 실패하지 않는다.
+        responses = [draft, draft]
+        calls = []
+        def fake_chat_with_retry(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                content=json.dumps(responses.pop(0), ensure_ascii=False)))])
+        self.f['chat_with_retry'] = fake_chat_with_retry
+        self.f['file_to_content_item'] = lambda image: {'type':'image_url','image_url':{'url':'data:image/jpeg;base64,ZmFrZQ=='}}
+        generated = self.f['generate_structured_copy'](d, '', ['image1','image2'])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(generated['md_sections']['fit'], draft['md_sections']['fit'])
+        self.assertEqual(len(calls[0]['messages'][1]['content']),3)
+        self.assertEqual(len(calls[1]['messages'][1]['content']),3)
+        output = self.f['assemble_final_output'](d,normalize_generated_strict(generated))
+        self.assertIn('보송 뽀글', output)
+        self.assertIn('가슴둘레 116cm',output)
+        self.assertEqual(output.count('────────────────────────────────────────'),1)
+
+    def test_editor_bad_json_keeps_original_if_usable(self):
+        d = product('야상')
+        initial = draft_for(d)
+        responses = [json.dumps(initial,ensure_ascii=False), 'not a JSON reply']
+        def fake_chat_with_retry(**kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=responses.pop(0)))])
+        self.f['chat_with_retry'] = fake_chat_with_retry
+        self.assertEqual(self.f['generate_structured_copy'](d,'',[]),initial)
+
+    def test_editor_service_error_keeps_usable_original(self):
+        d=product('슬랙스')
+        initial=draft_for(d)
+        count=[0]
+        def fake_chat_with_retry(**kwargs):
+            count[0]+=1
+            if count[0]==1:
+                return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(initial,ensure_ascii=False)))])
+            raise RuntimeError('simulated network failure')
+        self.f['chat_with_retry']=fake_chat_with_retry
+        self.assertEqual(self.f['generate_structured_copy'](d,'',[]),initial)
+
+    def test_unusable_drafts_get_one_targeted_repair(self):
+        d=product('블라우스')
+        full=draft_for(d)
+        broken=dict(full,recommend_lines=full['recommend_lines'][:1])
+        responses=[broken, broken, full]
+        calls=[]
+        def fake_chat_with_retry(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(responses.pop(0),ensure_ascii=False)))])
+        self.f['chat_with_retry']=fake_chat_with_retry
+        self.assertEqual(self.f['generate_structured_copy'](d,'',[]),full)
+        self.assertEqual(len(calls),3)
+        self.assertIn('추천',str(calls[2]['messages']))
+
+    def test_editor_damaged_fields_falls_back_to_valid_initial(self):
+        d=product('야상')
+        full=draft_for(d)
+        broken=dict(full,recommend_lines=full['recommend_lines'][:1])
+        responses=[full,broken]
+        def fake_chat_with_retry(**kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(responses.pop(0),ensure_ascii=False)))])
+        self.f['chat_with_retry']=fake_chat_with_retry
+        self.assertEqual(self.f['generate_structured_copy'](d,'',[]),full)
 
 
 if __name__ == '__main__':

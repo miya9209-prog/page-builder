@@ -13,7 +13,7 @@ from docx.oxml.ns import qn
 from docx.shared import Pt
 from openai import OpenAI, RateLimitError
 
-from quality_engine import (TIP_PROFILES, fact_report, check_quality,
+from quality_engine import (TIP_PROFILES, fact_report, check_quality, check_structure,
                             normalize_generated_strict, natural_wrap)
 
 st.set_page_config(page_title="PAGE BUILDER", layout="wide")
@@ -312,10 +312,10 @@ def build_generation_prompt(data, additional_request):
 8. 입력 문장을 그대로 복사하지 말고, 그 의미를 유지하며 자연스럽게 재구성하세요.
 
 [문장 품질]
-- MD원고는 4개 소제목, 각 영역에 해당하는 풍부하고 구체적인 문단 3~5개로 작성합니다. 영역별 본문은 공백 포함 115~220자 정도를 목표로 합니다.
+- MD원고는 4개 소제목으로 작성합니다. 근거가 충분하면 영역마다 구체적인 문단 3~5개를 쓰되, 입력·사진으로 확인된 정보가 적으면 2~3개라도 정확하게 작성합니다. 글자 수를 채우려고 사실을 만들거나 빈말을 반복하지 마세요.
 - 이 단계에서 한 줄 20~24자에 억지로 맞추지 마세요. 출력 함수가 자연스럽게 줄바꿈합니다. 의미와 문장 흐름이 우선입니다.
 - 각 영역의 문장은 전개가 자연스럽고 반복 없이 구체적이어야 합니다. '다양한 활용이 가능합니다' 같은 빈 문구로 채우지 마세요.
-- choice: 다른 상품과의 차이·선택 이유. fabric: 실제 혼용 소재/촉감/두께 (입력 근거 있을 때만). fit: 체형, 사이즈, 실측. occasion: 구체적인 코디와 착용 장면.
+- choice: 다른 상품과의 차이·선택 이유. fabric: 실제 혼용 소재/촉감/두께 (입력 근거 있을 때만). fit: 체형, 사이즈, 실측. occasion: 구체적인 코디와 착용 장면. 핏·디테일·어필포인트 칸이 비어 있으면 실측과 사진에서 확인되는 사실만 사용하고, 정보를 지어내거나 115자를 강제로 채우지 마세요.
 - 추천문장 4개는 모두 자연스러운 '~분'으로 끝납니다. '분께', '추천합니다', '권해드립니다', '입니다 분' 금지. 각기 다른 구매 니즈를 제시하세요.
 - review_lines 4개는 입을 때 확인할 포인트를 자연스러운 친근한 톤으로 작성하세요. 실제 직원/모델이 직접 착용했다는 근거가 없으면 가짜 경험담이나 인용을 꾸며내지 마세요.
 - FAQ 4개는 입력 상품에 맞는 현실적인 구매 장애 요인과 근거 있는 답변으로 작성하세요. 모르면 모른다고 하거나 실측 확인을 안내하세요.
@@ -339,53 +339,84 @@ def build_generation_prompt(data, additional_request):
 # LLM 생성
 # ─────────────────────────────────────────────
 def generate_structured_copy(data, additional_request, uploaded_images):
-    """초안 생성 후 상품정보 충실도 재검토. 부실 원고를 범용 문장으로 메우지 않음."""
-    prompt = build_generation_prompt(data, additional_request)
-    user_content = [{"type": "text", "text": prompt}]
-    for img in (uploaded_images[:5] if uploaded_images else []):
-        user_content.append(file_to_content_item(img))
+    """원고 생성 → 사실 기반 편집 검수. 분량 부족만으로 정상 원고를 폐기하지 않는다.
 
+    필수 JSON 구조가 깨진 경우에는 한 번만 구체적으로 보완 요청한다.
+    원본이 완전하면 검수 API 실패나 검수 결과의 역행에도 원고 출력 가능.
+    """
+    prompt = build_generation_prompt(data, additional_request)
+    image_items = [file_to_content_item(img) for img in (uploaded_images[:5] if uploaded_images else [])]
+    initial_content = [{"type": "text", "text": prompt}] + image_items
     messages = [
         {"role": "system", "content": "확인된 상품 정보만으로 한국어 커머스 카피를 작성하세요. JSON 객체만 반환하세요. 근거 없는 정보는 절대 추측하지 않습니다."},
-        {"role": "user", "content": user_content},
+        {"role": "user", "content": initial_content},
     ]
     first = chat_with_retry(model="gpt-4o", messages=messages, temperature=0.45, max_retries=2)
     raw = extract_json(first.choices[0].message.content)
-    issues = check_quality(raw, data, additional_request)
+    original_issues = check_quality(raw, data, additional_request)
 
-    # 수정 포인트가 없더라도 한 번 MD 편집 검수를 수행해 형식만 맞춘 싱거운 원고를 걸러낸다.
     editor_instructions = (
         "다음 상품에 대한 초안을 실무자가 바로 사용할 수준으로 꼼꼼히 편집하세요. "
-        "반드시 원래 JSON의 동일한 키/개수를 유지하세요. "
-        "구체적 디테일·소재·핏·어필 포인트가 누락된 곳을 보강하고, 반복되는 범용 표현과 과장·허위 경험담을 제거하세요. "
-        "특히 md_sections 4개 영역 각각 3~5개 문단, 내용 총 115자 이상이 되게 작성하세요. "
-        "리스트 문장과 사이즈팁의 정확성도 확인하세요. "
-        "모르는 사실은 만들지 말고 입력값만 사용하세요. JSON 객체만 답하세요."
+        "반드시 동일한 JSON 키와 필요한 개수(추천/후기/FAQ 각 4, 사이즈팁 4체형)를 유지하세요. "
+        "소재, 실측, 상품 고유 특징의 누락을 확인하고 범용 표현이나 근거 없는 내용을 고치세요. "
+        "md_sections의 4개 영역은 근거가 충분한 만큼 자연스럽고 구체적으로 서술하세요. "
+        "입력되지 않은 디테일/핏 정보가 있더라도 글자 수를 채우려고 만들어 내지 마세요. "
+        "사진에서 확인 가능한 형태/구조만 단정하세요. "
+        "형식보다 입력정보 반영과 자연스러운 문장이 중요합니다. JSON 객체만 답하세요."
     )
-    if issues:
-        editor_instructions += "\n[실제 검사에서 발견된 문제]\n" + "\n".join("- " + x for x in issues)
+    if original_issues:
+        editor_instructions += "\n[실제 검사에서 발견된 문제]\n" + "\n".join("- " + x for x in original_issues)
+    review_text = (
+        "[이 상품 입력 정보]\n" + prompt
+        + "\n[검토·개선할 초안 JSON]\n" + json.dumps(raw, ensure_ascii=False)
+    )
+    # 첫 생성의 이미지를 재사용해, 입력란이 빈 상품에서도 2차 편집이 사진 근거를 잃지 않게 한다.
+    review_content = ([{"type": "text", "text": review_text}] + image_items) if image_items else review_text
     audit = [
         {"role": "system", "content": editor_instructions},
-        {"role": "user", "content": "[이 상품 입력 정보]\n" + prompt + "\n[검토·개선할 초안 JSON]\n" + json.dumps(raw, ensure_ascii=False)},
+        {"role": "user", "content": review_content},
     ]
+    candidates = [raw]
     try:
         revised_result = chat_with_retry(model="gpt-4o", messages=audit, temperature=0.25, max_retries=1)
-        revised = extract_json(revised_result.choices[0].message.content)
-        revised_issues = check_quality(revised, data, additional_request)
-        if not revised_issues:
-            return revised
-        # 검수 모델이 더 나쁜 답을 냈다면 원본이 유효할 때는 원본을 사용한다.
-        if not issues:
-            return raw
-        raise ValueError("작성 품질 검증 미통과: " + " / ".join(revised_issues[:5]))
-    except RateLimitError:
-        if not issues:
+        candidates.append(extract_json(revised_result.choices[0].message.content))
+    except Exception:
+        # 원본에 모든 필수 영역이 있으면 편집 호출 문제만으로 다운로드를 차단하지 않는다.
+        if not check_structure(raw):
             return raw
         raise
-    except (ValueError, json.JSONDecodeError) as exc:
-        if not issues:
-            return raw
-        raise ValueError("원고 재검토에도 미흡한 항목이 남아 있습니다. " + str(exc)) from exc
+
+    def rank(candidate):
+        return (len(check_structure(candidate)), len(check_quality(candidate, data, additional_request)))
+
+    complete = [candidate for candidate in candidates if not check_structure(candidate)]
+    if complete:
+        # 같은 점수에서는 실제 문장 편집을 거친 최신 결과를 선택한다.
+        return min(reversed(complete), key=rank)
+
+    # 첫 생성/검수 모두 일부 필수 필드를 누락한 경우에만 표적 복구 1회.
+    best = min(reversed(candidates), key=rank)
+    missing = check_structure(best)
+    repair_text = (
+        "다음 상품의 JSON 원고에는 출력에 필수인 영역이 누락되었습니다. "
+        "가능한 다른 본문은 보존하고 지적된 필드만 해당 상품 입력 근거로 보완하세요. "
+        "빈 템플릿이나 타 상품 공통 문구로 채우지 마세요. 근거 없는 사실은 쓰지 마세요. "
+        "반드시 모든 키가 있는 JSON 객체만 반환하세요.\n"
+        "[복구할 필드]\n" + "\n".join(missing)
+        + "\n[실제 입력]\n" + prompt
+        + "\n[기존 원고 JSON]\n" + json.dumps(best, ensure_ascii=False)
+    )
+    repair_content = ([{"type": "text", "text": repair_text}] + image_items) if image_items else repair_text
+    fixed_result = chat_with_retry(
+        model="gpt-4o",
+        messages=[{"role": "system", "content": "필수 누락 필드만 보완하되 사실을 지어내지 않는 한국어 MD 편집자. JSON만 반환."},
+                  {"role": "user", "content": repair_content}],
+        temperature=0.2, max_retries=1,
+    )
+    fixed = extract_json(fixed_result.choices[0].message.content)
+    if not check_structure(fixed):
+        return fixed
+    raise ValueError("필수 원고 항목이 누락되어 출력할 수 없습니다: " + " / ".join(check_structure(fixed)[:4]))
 
 
 # ─────────────────────────────────────────────

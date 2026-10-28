@@ -111,10 +111,10 @@ def check_structure(draft: Any) -> List[str]:
     else:
         for field in MD_KEYS:
             lines = md.get(field)
-            if not isinstance(lines, list) or len([x for x in lines if compact(x)]) < 3:
-                problems.append(f"md_sections.{field}: 정보가 담긴 문장/단락 3개 이상 필요합니다.")
-            elif sum(len(compact(x)) for x in lines) < 115:
-                problems.append(f"md_sections.{field}: 설명이 지나치게 짧습니다.")
+            # 출력 가능 여부와 문장 풍부함은 별도 판단한다. 사진만으로 확인되거나
+            # 디테일/핏 입력이 적은 상품에 115자 하한을 강제하면 허위 설명을 유도한다.
+            if not isinstance(lines, list) or not any(compact(x) for x in lines):
+                problems.append(f"md_sections.{field}: 본문이 비어 있습니다.")
     tips = draft.get("size_tips")
     if not isinstance(tips, dict):
         problems.append("size_tips: 4개 체형 프로필이 필요합니다.")
@@ -131,6 +131,16 @@ def check_quality(draft: Dict[str, Any], data: Dict[str, Any], additional_reques
     if not isinstance(draft, dict):
         return issues
     content = content_string(draft)
+    # '더 자세히 쓰면 좋은가?'는 보완 권고만 하고 다운로드를 막지 않는다.
+    # 분량만 늘리기 위해 입력되지 않은 특징을 만들어내는 일을 방지한다.
+    md = draft.get("md_sections")
+    if isinstance(md, dict):
+        for field in MD_KEYS:
+            lines = md.get(field)
+            if isinstance(lines, list):
+                valid = [compact(x) for x in lines if compact(x)]
+                if valid and len(valid) < 2:
+                    issues.append(f"md_sections.{field}: 설명을 더 보완하면 좋습니다.")
     # 누락된 사실만 잡기 위한 보수적인 신호: 3글자 이상 핵심 토큰을 하나도 사용하지 않은 입력 묶음
     facts = input_facts(data, additional_request)
     for group in ("디테일", "핏·체형", "구매 포인트", "소재·촉감"):
