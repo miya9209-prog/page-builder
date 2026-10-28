@@ -13,7 +13,7 @@ sys.path.insert(0, str(HERE))
 from quality_engine import (
     TIP_PROFILES, check_quality, normalize_generated_strict,
     natural_wrap, check_structure, editorial_issues, score_editorial,
-    build_editorial_brief, soften_unverified_claims,
+    build_editorial_brief, soften_unverified_claims, apply_grounded_safety, validate_required_inputs,
 )
 
 
@@ -22,7 +22,7 @@ def app_functions():
     source_ast = ast.parse(source)
     keep = {'build_generation_prompt', 'generate_structured_copy', 'render_subsc_html',
             'render_text_source', 'build_subtap_html', 'assemble_final_output',
-            'result_to_docx_bytes', 'add_blue_divider', 'format_material_line',
+            'result_to_docx_bytes', 'add_blue_divider', 'extract_visual_evidence', 'format_material_line',
             'format_measurement_lines', 'extract_json', 'clean_line'}
     code = ast.Module(body=[n for n in source_ast.body if isinstance(n, ast.FunctionDef) and n.name in keep], type_ignores=[])
     from docx import Document
@@ -34,6 +34,7 @@ def app_functions():
                      fact_report=fact_report, check_quality=check_quality, check_structure=check_structure,
                      build_editorial_brief=build_editorial_brief, editorial_issues=editorial_issues,
                      score_editorial=score_editorial, soften_unverified_claims=soften_unverified_claims,
+                     apply_grounded_safety=apply_grounded_safety, validate_required_inputs=validate_required_inputs,
                      normalize_generated_strict=normalize_generated_strict,
                      natural_wrap=natural_wrap, Document=Document, OxmlElement=OxmlElement, qn=qn, Pt=Pt,
                      RateLimitError=RuntimeError, DIVIDER_MARKER="────────────────────────────────────────",

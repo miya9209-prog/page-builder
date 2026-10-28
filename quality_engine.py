@@ -38,12 +38,13 @@ def input_facts(data: Dict[str, Any], additional_request: str = "") -> Dict[str,
         "구매 포인트": [data.get("appeal_points", ""), data.get("etc", "")],
         "사이즈·컬러": [data.get("size", ""), data.get("color", "")],
         "세탁·주의": [data.get("washing", "")],
+        "사진에서 확인된 외관": data.get("visual_details", []),
     }
     result = {}
     for label, blocks in fields.items():
         vals = []
         for b in blocks:
-            for fact in split_facts(b, 8):
+            for fact in (list(b) if isinstance(b,list) else split_facts(b, 8)):
                 if fact not in vals:
                     vals.append(fact)
         if vals:
@@ -143,7 +144,7 @@ def check_quality(draft: Dict[str, Any], data: Dict[str, Any], additional_reques
                     issues.append(f"md_sections.{field}: 설명을 더 보완하면 좋습니다.")
     # 누락된 사실만 잡기 위한 보수적인 신호: 3글자 이상 핵심 토큰을 하나도 사용하지 않은 입력 묶음
     facts = input_facts(data, additional_request)
-    for group in ("디테일", "핏·체형", "구매 포인트", "소재·촉감"):
+    for group in ("디테일", "핏·체형", "구매 포인트", "소재·촉감", "사진에서 확인된 외관"):
         if group not in facts:
             continue
         terms = []
@@ -369,6 +370,20 @@ def editorial_issues(draft: Dict[str, Any], data: Dict[str, Any], additional_req
                 issues.append('FAQ 답변이 지나치게 짧습니다. 질문에 직접 답하고 상품 근거 또는 확인할 조건을 추가하세요.')
                 break
 
+    # New real-output regressions: unsupported 'not hip covering', overclaim of shedding,
+    # and country handling are warnings rather than a blocking download gate.
+    if re.search(r'힙을\s*(?:살짝\s*)?덮지\s*않는', prose) and not re.search(r'힙.{0,7}(?:덮|가리|커버)', input_fit):
+        issues.append('총장 수치만으로 힙을 덮지 않는다고 단정했습니다.')
+    if re.search(r'(?:총장|총길이)\s*\d{2,3}\s*cm\s*로\s*다양한\s*체형', prose):
+        issues.append('총장 수치만으로 다양한 체형에 잘 맞는다고 단정했습니다.')
+    if re.search(r'털\s*빠짐\s*걱정\s*없는', content) and re.search(r'털\s*빠짐.{0,8}거의\s*없', full_input):
+        issues.append('털 빠짐이 거의 없음을 걱정 없는 것으로 과장했습니다.')
+    if not compact(data.get('country','')):
+        issues.append('제조국 입력값이 비어 있습니다. 제품 라벨에서 확인해 입력해야 합니다.')
+    if not data.get('visual_details') and ('립니트' in compact(data.get('display_name','')) and '립니트' not in content):
+        issues.append('상품명에 있는 립니트의 구체적인 위치·형태가 확인되지 않았습니다. 사진이나 상세 입력에서 확인해 주세요.')
+    # Prevent altered measurement numbers, a source of preventable returns.
+    issues.extend(numeric_measurement_issues(draft, data))
     return list(dict.fromkeys(issues))
 
 
@@ -420,6 +435,9 @@ def purchase_motive(data: Dict[str, Any]) -> str:
     fit = compact(data.get('fit', ''))
     benefits = compact(data.get('appeal_points', ''))
     fabric = compact(data.get('material_desc_raw', ''))
+    photo_details = data.get('visual_details', [])
+    if isinstance(photo_details, list) and photo_details:
+        return '사진에서 관찰된 디자인 포인트: ' + ' / '.join(map(str, photo_details[:3])) + ' — 고객에게 보이는 실제 차이 중심으로 설명하되 원단·착용 효과 추정 금지'
     haystack = ' '.join((detail, fit, benefits, fabric))
     candidates = [
         (r'털\s*빠짐(?:이)?\s*(?:거의\s*없|적)', '보송한 소재를 고를 때 털 빠짐을 걱정하는 고객', '털 빠짐이 거의 없다는 입력 근거를 과장 없이 설명'),
@@ -456,10 +474,11 @@ def build_editorial_brief(data: Dict[str, Any]) -> str:
         f'상품: {name}',
         '이번 상품의 최우선 구매 동기: ' + purchase_motive(data),
         f'확인된 디테일/핏/포인트: {known or "명시 입력 없음"}',
+        '사진에서 관찰된 외관 (직원 확인 필요): ' + ' / '.join(map(str,data.get('visual_details', []))),
         f'확인된 원단 특징: {material or "미입력"}',
         f'실측: {measurement or "미입력"}',
         '섹션 역할 배분:',
-        '1) choice: 고객이 겪는 구체적인 구매 고민 → 해당 상품의 확인된 특징 → 선택할 이유. 소재 성분·컬러·사이즈 나열 금지',
+        '1) choice: 제품 외관의 고유 디테일이 확인됐다면 가장 먼저 활용. 고객 고민은 하나만 자연스럽게 연결하되 가장 큰 고민이라고 일반화 금지. 소재 성분·컬러·사이즈 나열 금지',
         '2) fabric: 혼용률·촉감·질감·관리 주의. 두께/보온성은 직접 확인된 경우만. 의류 소재와 색상 혼동 금지',
         '3) fit: 확인된 실측, 사이즈 표기, 형태/핏. 숫자만으로 착용감을 보증하지 않기. 총장으로 힙커버를 단정하지 않기',
         '4) occasion: 상품의 형태·색상에 근거한 구체적인 코디 2~3가지와 TPO. 상품 특징 요약 반복 금지',
@@ -469,3 +488,96 @@ def build_editorial_brief(data: Dict[str, Any]) -> str:
         '체형팁: 55/66/66반/77별 실측 비교 시 참고사항만; 모델 실착 근거 없이 활동성·힙덮음·슬림효과 단정 금지',
         '입력 정보 부족: ' + ('; '.join(gaps) if gaps else '상세 입력값 사용 가능'),
     ])
+
+
+# ── Output-time grounded claims filter. This runs even if the LLM reviewer fails.
+def validate_required_inputs(data: Dict[str, Any]) -> List[str]:
+    """Block silently incomplete output, never invent manufacturing origin."""
+    missing = []
+    for key, label in (("display_name", "상품명"), ("country", "제조국")):
+        if not compact(data.get(key)):
+            missing.append(label)
+    return missing
+
+
+def safe_measurement(data: Dict[str, Any], labels: tuple) -> str:
+    text = ' '.join(map(str, data.get('measurement_lines', [])))
+    for label in labels:
+        match = re.search(re.escape(label) + r'\s*[:：]?\s*(\d{2,3}(?:\.\d+)?)', text)
+        if match:
+            return match.group(1)
+    return ''
+
+
+def apply_grounded_safety(draft: Dict[str, Any], data: Dict[str, Any]) -> Dict[str, Any]:
+    """Only rewrite provably unsupported assertions, keeping the editorial copy otherwise intact."""
+    import copy
+    out = copy.deepcopy(draft)
+    evidence = ' '.join(str(data.get(k, '')) for k in ('fit', 'detail_tip', 'appeal_points', 'etc', 'material_desc_raw'))
+    length = safe_measurement(data, ('총장','총길이'))
+    chest = safe_measurement(data, ('가슴둘레',))
+    hip_evidence = bool(re.search(r'힙.{0,7}(?:덮|가리|커버)', evidence))
+    unverified_fit = not bool(re.search(r'실착|착용 테스트|모델 착용|착용 후기', evidence))
+
+    def correct(text):
+        text = str(text)
+        # Restrict this adjustment to input claiming minimal shedding.
+        if re.search(r'털\s*빠짐.{0,8}(거의\s*없|적)', evidence):
+            text = re.sub(r'털\s*빠짐\s*걱정\s*없는', '털 빠짐이 거의 없는', text)
+            text = re.sub(r'털\s*빠짐이?\s*전혀\s*없습니다', '털 빠짐이 거의 없습니다', text)
+            text = re.sub(r'털\s*빠짐이?\s*전혀\s*없는', '털 빠짐이 거의 없는', text)
+        if not hip_evidence:
+            text = re.sub(r'(?:총장|총길이)\s*\d+(?:\.\d+)?\s*cm\s*로\s*힙을\s*(?:살짝\s*)?(?:덮(?:는|지\s*않는|습니다|어주는)|가려주는)[^.]*\.',
+                          '총장은 평소 입으시는 옷의 실측과 비교해 주세요.', text)
+            text = re.sub(r'힙을\s*(?:살짝\s*)?덮(?:는|지\s*않는|습니다)[^.]*\.',
+                          '실제 기장 위치는 체형과 착용 방식에 따라 달라집니다.', text)
+        # A numerical length/shoulder value alone does not establish suitability.
+        text = re.sub(r'(?:총장|총길이)\s*\d+(?:\.\d+)?\s*cm\s*로\s*다양한\s*체형에\s*잘\s*맞습니다\.',
+                      '총장은 평소 입으시는 옷의 실측과 비교해 주세요.', text)
+        text = re.sub(r'(?:소매\s*길이|어깨단면)\s*\d+(?:\.\d+)?\s*cm\s*로\s*적당한\s*길이[^.]*\.',
+                      '소매와 어깨 실측을 평소 착용하는 옷과 비교해 주세요.', text)
+        if unverified_fit:
+            text = re.sub(r'이너.{0,18}(?:불편함이\s*없|답답하지\s*않)[^.]*\.',
+                          '겹쳐 입으실 경우 가슴·암홀 실측을 비교해 주세요.', text)
+            text = re.sub(r'(?:활동성이\s*좋습니다|어떤\s*체형에도\s*잘\s*맞습니다|다양한\s*체형에\s*잘\s*맞습니다)\.',
+                          '착용감은 체형에 따라 달라질 수 있어 실측 확인을 권합니다.', text)
+        return text
+
+    for key in ('material_desc_lines', 'recommend_lines', 'review_lines'):
+        if isinstance(out.get(key), list): out[key] = [correct(s) for s in out[key]]
+    if isinstance(out.get('faqs'), list):
+        for faq in out['faqs']:
+            if isinstance(faq,dict):
+                for key in ('q','a'):
+                    if isinstance(faq.get(key),str): faq[key] = correct(faq[key])
+    if isinstance(out.get('md_sections'), dict):
+        for key in MD_KEYS:
+            if isinstance(out['md_sections'].get(key),list):
+                out['md_sections'][key] = [correct(s) for s in out['md_sections'][key]]
+    if isinstance(out.get('size_tips'), dict):
+        for key in TIP_KEYS:
+            if isinstance(out['size_tips'].get(key),list):
+                out['size_tips'][key] = [correct(s) for s in out['size_tips'][key]]
+    return out
+
+
+def numeric_measurement_issues(draft: Dict[str, Any], data: Dict[str, Any]) -> List[str]:
+    """Compare printed dimension numbers against actual inputs; handles multiple listed sizes."""
+    raw = ' '.join(str(v) for v in data.get('measurement_lines', []))
+    text = content_string(draft)
+    tips = draft.get('size_tips', {})
+    if isinstance(tips, dict):
+        text += ' ' + ' '.join(' '.join(map(str, x)) for x in tips.values() if isinstance(x,list))
+    warnings=[]
+    groups = [('총장','총길이'), ('가슴둘레',), ('어깨단면',), ('암홀둘레',),
+              ('소매길이',), ('소매단둘레',), ('허리둘레',), ('엉덩이둘레',)]
+    for labels in groups:
+        pattern = r'(?:' + '|'.join(re.escape(t) for t in labels) + r')\s*[:：=]?\s*(\d{2,3}(?:\.\d+)?)\s*(?:cm)?'
+        expected = {float(v) for v in re.findall(pattern,raw)}
+        actual = {float(v) for v in re.findall(pattern,text)}
+        # An empty input does not license the model to invent a dimension.
+        if actual and not expected:
+            warnings.append(f'{labels[0]}: 입력되지 않은 실측 수치가 원고에 나타납니다.')
+        elif expected and actual - expected:
+            warnings.append(f'{labels[0]}: 원고 실측 {sorted(actual-expected)}가 입력값 {sorted(expected)}과 다릅니다.')
+    return warnings

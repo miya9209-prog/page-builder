@@ -15,7 +15,8 @@ from openai import OpenAI, RateLimitError
 
 from quality_engine import (TIP_PROFILES, fact_report, check_quality, check_structure,
                             normalize_generated_strict, natural_wrap, editorial_issues,
-                            score_editorial, build_editorial_brief, soften_unverified_claims)
+                            score_editorial, build_editorial_brief, soften_unverified_claims,
+                            apply_grounded_safety, validate_required_inputs)
 
 st.set_page_config(page_title="PAGE BUILDER", layout="wide")
 
@@ -30,6 +31,7 @@ for key, default in [
     ("generated_docx", b""),
     ("generated_file_stem", "page_builder"),
     ("generated_issues", []),
+    ("generated_visual_details", []),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -256,6 +258,7 @@ def reset_all():
     st.session_state.generated_docx = b""
     st.session_state.generated_file_stem = "page_builder"
     st.session_state.generated_issues = []
+    st.session_state.generated_visual_details = []
 
 
 # ─────────────────────────────────────────────
@@ -273,6 +276,44 @@ def extract_json(text):
     return json.loads(m.group(0))
 
 
+
+def extract_visual_evidence(data, image_items):
+    """Optional photo-only inspection. Never turn an image inference into a fabric/fit guarantee.
+
+    On API failure leave visual evidence empty; the regular generation path still works.
+    """
+    if not image_items or not all(isinstance(x, dict) and x.get("type") == "image_url" for x in image_items):
+        return []
+    task = (
+        "이 상품 사진에서 눈으로 확실하게 확인되는 디자인 요소만 최대 6개 관찰하세요. "
+        "예: 넥 형태, 카라, 여밈, 단추, 소매 끝, 밑단, 포켓, 배색, 절개, 립 조직이 위치한 부분. "
+        "상품 이름에 나온 특징이어도 실제 사진으로 확인할 수 없다면 쓰지 마세요. "
+        "실루엣/길이는 뒷모습과 전체 착장 사진이 있을 때만 제한적으로 묘사하세요. "
+        "촉감·소재 혼용률·신축성·보온성·털빠짐·제조국·치수·착용의 편안함은 사진으로 판단하지 마세요. "
+        "사진의 색은 조명 차이가 있으므로 입력된 컬러명을 대체하지 마세요. "
+        "반드시 {\"visible_details\": [\"확인된 외관 특징\"]} JSON으로만 답하세요. "
+        "불명확하면 빈 배열을 반환하세요."
+    )
+    try:
+        resp = chat_with_retry(
+            model="gpt-4o", temperature=0.1, max_retries=0,
+            messages=[{"role":"system", "content":task},
+                      {"role":"user", "content":[{"type":"text", "text":"제품명: " + str(data.get('display_name',''))}] + image_items}],
+        )
+        obj = extract_json(resp.choices[0].message.content)
+        values = obj.get('visible_details', []) if isinstance(obj, dict) else []
+        if not isinstance(values, list):
+            return []
+        forbidden = ("입어", "착용감", "편안", "보온", "촉감", "털 빠짐", "방수", "신축", "스판", "폴리에스터", "면100", "제조국")
+        details = []
+        for value in values[:6]:
+            detail = re.sub(r"\s+", " ", str(value or '')).strip().strip('-•')
+            if 3 <= len(detail) <= 65 and not any(term in detail for term in forbidden) and detail not in details:
+                details.append(detail)
+        return details
+    except Exception:
+        return []
+
 # ─────────────────────────────────────────────
 # 프롬프트 빌더
 # ─────────────────────────────────────────────
@@ -281,6 +322,8 @@ def build_generation_prompt(data, additional_request):
     fields = {
         "상품명": data.get("display_name", ""),
         "컬러": data.get("color", ""),
+        "제조국": data.get("country", ""),
+        "사진으로 확인된 디자인 특징(직원 확인 권장)": data.get("visual_details", []),
         "사이즈": data.get("size", ""),
         "소재": data.get("material", ""),
         "소재설명": data.get("material_desc_raw", ""),
@@ -296,7 +339,7 @@ def build_generation_prompt(data, additional_request):
     raw = json.dumps(fields, ensure_ascii=False, indent=2)
     profiles = "; ".join(TIP_PROFILES.values())
     return f"""당신은 미샵(MISHARP)의 4050 여성 패션 상세페이지를 작성하는 전문 MD 카피라이터입니다.
-이번 작업은 문장 수 채우기가 아니라, 입력된 한 상품의 구매 이유를 고객이 이해하도록 정확하고 풍부하게 설명하는 것입니다.
+이번 작업은 문장 수 채우기가 아니라, 입력된 한 상품의 구매 이유를 고객이 이해하도록 정확하고 풍부하게 설명하는 것입니다. 사진의 시각 특징은 사진 관찰에 의한 참고이며 실제 제품을 본 직원의 확인이 우선합니다.
 
 [이번 상품에 대해 확인된 입력값]
 {raw}
@@ -309,14 +352,14 @@ def build_generation_prompt(data, additional_request):
 
 [반드시 지켜야 할 MD 편집 원칙]
 - 첫 번째 소제목은 상품명·소재·컬러·FREE사이즈를 열거하며 시작하지 마세요. 고객이 구매 전에 느끼는 한 가지 고민을 고르고, 확인된 상품 장점이 어떻게 그 고민을 덜어 줄지 설명하세요. 고객 고민을 끼워 맞추거나 없는 장점을 만들지 마세요.
-- 사진이 있으면 소재 표면, 카라·소매·밑단·여밈·장식 등 눈에 보이는 특징을 살펴보고 사진에서 명확히 확인된 요소만 쓰세요. 제품명에 '립니트'가 있어도 위치·형태가 보이지 않으면 임의로 추정하지 마세요.
-- 첫 섹션에 사용한 근거를 두 번째 섹션에서 장황하게 반복하지 마세요. 1절은 고객의 선택 이유, 2절은 실제 질감·소재 특성, 3절은 가슴둘레·어깨·총장 등 유용한 실측, 4절은 고객 옷장 속 구체적인 코디입니다.
+- 사진에서 확인된 디자인 특징은 상품의 차별점을 설명할 때 우선 검토하세요. 제품명에 '립니트'가 있어도 위치·형태가 사진으로 확인되지 않았다면 추정하지 마세요. 사진에서 확실한 외관 특징과 텍스트로 확인된 사실을 구분하세요.
+- 확인된 디자인 차별점이 있으면 그것을 선택 이유에 한 번 구체적으로 설명하고, 원단/핏/코디 섹션에서 같은 말을 재진술하지 마세요. 첫 섹션에 사용한 근거를 두 번째 섹션에서 장황하게 반복하지 마세요. 1절은 고객의 선택 이유, 2절은 실제 질감·소재 특성, 3절은 가슴둘레·어깨·총장 등 유용한 실측, 4절은 고객 옷장 속 구체적인 코디입니다.
 - 자켓·상의에서 상체 여유나 부해 보임을 다룰 때 입력에 가슴둘레 수치가 있으면 해당 숫자를 우선 활용하되, 입었을 때 날씬함·편안함은 실착 근거 없이 보장하지 마세요.
-- 58cm 등 총장 숫자만으로 힙을 덮는다고 결론 내리지 마세요. '실측 총장을 평소 자켓과 비교하세요'가 안전합니다.
+- 58cm 등 총장 숫자만으로 힙을 덮거나 덮지 않는다고 결론 내리지 마세요. 총장과 체형별 위치는 착장 근거가 없으면 확정할 수 없습니다. '실측 총장을 평소 자켓과 비교하세요'가 안전합니다.
 - 사이즈팁 4개는 동일한 '여유롭다/편안하다' 표현을 바꾸어 반복하지 마세요. 55~77 각각 판단할 실측 위치와 체형 차이를 다르게 알려주고 실제 모델 실착 경험은 지어내지 마세요.
 - FAQ는 '부해 보일까요?'라고 물으면 원단 볼륨·핏과 개인차를 정직하게 답하세요. '실측을 참고하면 적합합니다'만 쓰지 마세요. 질문에 먼저 답하고 근거/조건을 설명하세요.
 - '착용 전 체크 포인트'는 스펙 재진술이 아닙니다. 최소 2개는 실제로 비교·확인할 행동을 설명하세요. 후기를 꾸미지 마세요.
-- 정보를 늘리기 위해 같은 말을 반복하지 말고, 확인되지 않은 착용·보온·관리 효과를 약속하지 마세요.
+- 정보를 늘리기 위해 같은 말을 반복하지 말고, 확인되지 않은 착용·보온·관리 효과를 약속하지 마세요. '거의 없음'을 '걱정 없음'으로 과장하지 마세요. 제조국은 입력값만 쓰며 미입력 시 지어내지 마세요.
 
 [작성 순서]
 1. 입력에서 증명되는 상품 특징/소재/장점/주의사항을 머릿속에 정리하세요.
@@ -361,8 +404,11 @@ def generate_structured_copy(data, additional_request, uploaded_images):
     필수 JSON 구조가 깨진 경우에는 한 번만 구체적으로 보완 요청한다.
     원본이 완전하면 검수 API 실패나 검수 결과의 역행에도 원고 출력 가능.
     """
-    prompt = build_generation_prompt(data, additional_request)
     image_items = [file_to_content_item(img) for img in (uploaded_images[:5] if uploaded_images else [])]
+    # Observe product-visible details once before drafting, rather than repeatedly
+    # asking the writer to guess what the photos show.
+    data["visual_details"] = extract_visual_evidence(data, image_items)
+    prompt = build_generation_prompt(data, additional_request)
     initial_content = [{"type": "text", "text": prompt}] + image_items
     messages = [
         {"role": "system", "content": "확인된 상품 정보만으로 한국어 커머스 카피를 작성하세요. JSON 객체만 반환하세요. 근거 없는 정보는 절대 추측하지 않습니다."},
@@ -412,7 +458,7 @@ def generate_structured_copy(data, additional_request, uploaded_images):
     except Exception:
         # 원본에 모든 필수 영역이 있으면 편집 호출 문제만으로 다운로드를 차단하지 않는다.
         if not check_structure(raw):
-            return soften_unverified_claims(raw, data)
+            return apply_grounded_safety(soften_unverified_claims(raw, data), data)
         raise
 
     def rank(candidate):
@@ -447,7 +493,7 @@ def generate_structured_copy(data, additional_request, uploaded_images):
                     best = new_draft
             except Exception:
                 pass  # 최소한 출력 가능한 정상 초안은 유지한다.
-        return soften_unverified_claims(best, data)
+        return apply_grounded_safety(soften_unverified_claims(best, data), data)
 
     # 첫 생성/검수 모두 일부 필수 필드를 누락한 경우에만 표적 복구 1회.
     best = min(reversed(candidates), key=rank)
@@ -470,7 +516,7 @@ def generate_structured_copy(data, additional_request, uploaded_images):
     )
     fixed = extract_json(fixed_result.choices[0].message.content)
     if not check_structure(fixed):
-        return soften_unverified_claims(fixed, data)
+        return apply_grounded_safety(soften_unverified_claims(fixed, data), data)
     raise ValueError("필수 원고 항목이 누락되어 출력할 수 없습니다: " + " / ".join(check_structure(fixed)[:4]))
 
 
@@ -863,7 +909,7 @@ def assemble_final_output(data, structured):
     lines.append("사이즈 : " + data["size"])
     lines.append("소재 : " + material_line)
     lines.append("소재설명 : " + material_desc_paragraph)
-    lines.append("제조국 : " + data["country"])
+    lines.append("제조국 : " + (data.get("country", "").strip() or "미입력 (확인 필요)"))
     lines.append("")
     lines.append("○ 포인트 코멘트")
     lines.append("-")
@@ -1039,6 +1085,11 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
         "washing": washing,
     }
 
+    missing_fields = validate_required_inputs(data)
+    if missing_fields:
+        st.error("원고 생성을 위해 필수 정보를 입력해 주세요: " + ", ".join(missing_fields))
+        st.stop()
+
     with st.spinner("출력물을 생성 중입니다..."):
         try:
             structured_raw = generate_structured_copy(data, additional_request, uploaded_images)
@@ -1055,10 +1106,15 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
     st.session_state.generated_result = result
     st.session_state.generated_docx = result_to_docx_bytes(result)
     st.session_state.generated_issues = editorial_issues(structured, data, additional_request)
+    st.session_state.generated_visual_details = data.get("visual_details", [])
     st.session_state.generated_file_stem = (display_name or "page_builder").replace(" ", "_")
 
 # ─── 결과 표시 (세션 기반) ───
 if st.session_state.generated_result:
+    if st.session_state.generated_visual_details:
+        with st.expander("사진에서 확인된 디자인 특징 (원고 사용 전 직원 확인)", expanded=False):
+            for detail in st.session_state.generated_visual_details:
+                st.write("• " + detail)
     if st.session_state.generated_issues:
         with st.expander("원고 사실확인 필요 항목 (출력은 가능합니다)", expanded=False):
             for issue in st.session_state.generated_issues:
