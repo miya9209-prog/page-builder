@@ -308,6 +308,67 @@ def editorial_issues(draft: Dict[str, Any], data: Dict[str, Any], additional_req
         tiptext=' '.join(str(v) for v in tips.values())
         if any(x in tiptext for x in ('드라마틱한', '무조건', '누구나', '완벽한 체형', '활동성이 좋습니다')):
             issues.append('실제 착용 근거 없는 사이즈팁의 과장·확정 표현이 있습니다.')
+    # 검증용 실제 자켓 출력물에서 관찰된 취약점: 선택 이유가 상품명/스펙으로 시작하고
+    # 핵심 고민을 다루지 않는 문제. '구매 고민' 문구 자체를 억지로 추가시키지는 않는다.
+    if isinstance(md, dict):
+        choice = sections.get('choice', '')
+        if choice:
+            product_name = compact(data.get('display_name', ''))
+            starts_with_catalogue = bool(product_name and choice.startswith(product_name))
+            solves_worry = bool(re.search(r'걱정|고민|찾으|망설|불편|부담|신경\s*쓰|원하', choice))
+            if starts_with_catalogue and not solves_worry:
+                issues.append('선택 이유가 상품명으로 시작하는 스펙 나열입니다. 고객 고민과 확인된 해결 가치를 연결하세요.')
+            if ('폴리에스터' in choice and ('사이즈' in choice or '컬러' in choice)) and not solves_worry:
+                issues.append('선택 이유에 소재·사이즈·컬러를 한꺼번에 나열했습니다. 구매 가치부터 제시하세요.')
+            # 비슷한 소재 사실을 두 영역에서 장황하게 반복하는 경우
+            fabric = sections.get('fabric','')
+            matching_features = ('털 빠짐', '폴리에스터', '포근한 질감', '부드러운 촉감')
+            repeated = [x for x in matching_features if x in choice and x in fabric]
+            if len(repeated) >= 2:
+                issues.append('선택 이유와 소재 설명이 같은 특징을 반복합니다. 선택 이유는 고객 편익, 소재는 근거 중심으로 분리하세요.')
+        fit_text = sections.get('fit','')
+        measurements = ' '.join(str(v) for v in data.get('measurement_lines', []))
+        chest = re.search(r'(?:가슴\s*둘레)\s*[:=]?\s*(\d{2,3})', measurements)
+        if chest and re.search(r'자켓|점퍼|코트|블라우스|셔츠', compact(data.get('display_name', ''))):
+            if ('여유' in fit_text or '체형' in fit_text or '품' in fit_text) and not re.search(r'가슴\s*둘레\s*[:=]?\s*' + chest.group(1), fit_text):
+                issues.append(f'상체 품을 설명하면서 핵심 가슴둘레 {chest.group(1)}cm 실측이 빠졌습니다. 핏 설명에 검토하세요.')
+
+    # 입력에 없는 착용·기능 효과가 재작성 원고에서 확정되지 않도록 본문과 사이즈팁 전체 검사.
+    input_fit = compact(data.get('fit','')) + ' ' + compact(data.get('detail_tip',''))
+    tips = draft.get('size_tips', {})
+    tip_text = ' '.join(' '.join(str(x) for x in v) for v in tips.values() if isinstance(v,list)) if isinstance(tips,dict) else ''
+    prose = content + ' ' + tip_text
+    if re.search(r'힙(?:을|까지|라인)?\s*(?:살짝\s*)?덮(?:는|어주는|어줍니다|습니다)', prose) and not re.search(r'힙(?:을|까지|라인)?\s*(?:살짝\s*)?덮', input_fit):
+        issues.append('실측 총장만으로 힙을 덮는다고 단정했습니다. 실제 핏 근거가 없으면 삭제하세요.')
+    if re.search(r'보온성(?:이)?\s*(?:뛰어나|뛰어난|우수|탁월)', prose) and not re.search(r'보온성(?:이)?\s*(?:뛰어나|뛰어난|우수|탁월)', ' '.join(compact(v) for v in data.values())):
+        issues.append('입력 근거 없이 보온성이 뛰어나다고 단정했습니다.')
+    if re.search(r'이너.{0,14}(?:불편함이 없|답답하지 않|충분히 들어가|여유롭게 입)', tip_text) and not re.search(r'이너|레이어드|겹쳐\s*입', input_fit):
+        issues.append('실제 레이어드 착용 근거 없이 이너 착용 여유를 보장하는 사이즈팁입니다.')
+    if re.search(r'(?:총장|총길이)\s*\d{2,3}\s*cm.{0,10}적당', prose):
+        issues.append('총장 숫자만으로 길이가 적당하다고 확정했습니다. 평소 옷 실측과 비교하도록 안내하세요.')
+
+    # '착용 전 체크 포인트'가 실제 체크 방법 없이 단순 상품 스펙만 재진술하는 경우.
+    review = draft.get('review_lines',[])
+    if isinstance(review,list) and review:
+        actions = sum(bool(re.search(r'확인|비교|살펴|체크|참고|고르|선택|보세요|따져|느껴질', compact(x))) for x in review)
+        if actions < 2:
+            issues.append('착용 전 체크 포인트가 스펙 재진술에 그칩니다. 고객이 실제 확인할 방법을 2개 이상 안내하세요.')
+
+    # FAQ에서 질문에 직접 답하지 않고 '실측 참고'로 회피하는 사례.
+    faqs=draft.get('faqs',[])
+    if isinstance(faqs,list):
+        for f in faqs[:4]:
+            if not isinstance(f,dict):
+                continue
+            q=compact(f.get('q','')); ans=compact(f.get('a',''))
+            if re.search(r'부해\s*보|날씬해\s*보|뚱뚱해\s*보',q):
+                # 핵심 우려에 대한 조건부 설명 없이 막연한 '다양한 체형/실측 참고'만 답하는 경우
+                if re.search(r'실측\s*사이즈를?\s*참고.{0,15}다양한\s*체형에\s*적합',ans) or (re.search(r'실측\s*사이즈를?\s*참고|다양한\s*체형에\s*적합',ans) and not re.search(r'볼륨|부피|핏|실루엣|체형\s*차이|착용\s*위치',ans)):
+                    issues.append('부해 보이는지에 관한 FAQ 답변이 모호합니다. 확인된 원단 볼륨과 체형별 개인차를 구분해 직접 답하세요.')
+            if len(ans) < 27:
+                issues.append('FAQ 답변이 지나치게 짧습니다. 질문에 직접 답하고 상품 근거 또는 확인할 조건을 추가하세요.')
+                break
+
     return list(dict.fromkeys(issues))
 
 
@@ -349,6 +410,35 @@ def soften_unverified_claims(draft: Dict[str, Any], data: Dict[str, Any]) -> Dic
     return out
 
 
+def purchase_motive(data: Dict[str, Any]) -> str:
+    """Suggest a customer decision angle only from stated product facts.
+
+    This is not a generated sales claim: it gives the model one grounded worry
+    to resolve, rather than allowing the model to simply recite specifications.
+    """
+    detail = compact(data.get('detail_tip', ''))
+    fit = compact(data.get('fit', ''))
+    benefits = compact(data.get('appeal_points', ''))
+    fabric = compact(data.get('material_desc_raw', ''))
+    haystack = ' '.join((detail, fit, benefits, fabric))
+    candidates = [
+        (r'털\s*빠짐(?:이)?\s*(?:거의\s*없|적)', '보송한 소재를 고를 때 털 빠짐을 걱정하는 고객', '털 빠짐이 거의 없다는 입력 근거를 과장 없이 설명'),
+        (r'구김\s*(?:적|없|걱정)|링클프리', '하루 동안 옷의 구김이 신경 쓰이는 고객', '입력에 확인된 구김 관련 소재 특성을 구체적으로 설명'),
+        (r'비침\s*(?:없|적)|비침\s*제로', '밝은 색 옷의 비침이 걱정인 고객', '입력된 비침 특성만 근거로 설명'),
+        (r'복부|팔뚝|군살|체형\s*커버', '상체 또는 복부 라인이 신경 쓰이는 고객', '실제 확인된 핏·여유분·디테일을 연결하되 효과를 보장하지 않기'),
+        (r'허리\s*밴딩|밴딩', '허리 압박과 장시간 착용이 신경 쓰이는 고객', '허리 밴딩의 구체적인 구조를 설명하고 착용감은 확정하지 않기'),
+        (r'스트레치|텐션|신축|스판', '움직일 때 원단의 유연함을 중요하게 보는 고객', '입력된 신축성 근거를 설명하고 활동성을 무조건 보장하지 않기'),
+        (r'탈부착|타이|배색|절개|립니트', '기본 옷에 차별화된 디테일을 원하는 고객', '실제로 확인된 디테일이 코디에 주는 차이 중심으로 설명'),
+    ]
+    for pat,worry,evidence in candidates:
+        if re.search(pat,haystack):
+            return f'고객 고민: {worry} / 입증할 가치: {evidence}'
+    for value in (detail, benefits, fit, fabric):
+        if value:
+            return f'선택 이유 후보: 입력값 「{value[:100]}」의 실제 차별점이 누구에게 필요한지 설명. 근거 없는 효과 추가 금지'
+    return '상품 고유의 판매 포인트 입력이 부족함: 이름·소재만으로 효과를 추정하지 말고 실제 확인되는 사실만 간결히 설명'
+
+
 def build_editorial_brief(data: Dict[str, Any]) -> str:
     """Specific editorial allocation; no cross-product sales claims."""
     name=compact(data.get('display_name',''))
@@ -363,7 +453,9 @@ def build_editorial_brief(data: Dict[str, Any]) -> str:
     if not fit: gaps.append('핏·실루엣: 미입력 — 사진/실측 근거 없이 체형 커버 효과 확정 금지')
     if not benefits: gaps.append('주요 어필 포인트: 미입력 — 구매 편익은 확인된 소재·구조를 토대로만 설명')
     return '\n'.join([
-        f'상품: {name}',f'확인된 디테일/핏/포인트: {known or "명시 입력 없음"}',
+        f'상품: {name}',
+        '이번 상품의 최우선 구매 동기: ' + purchase_motive(data),
+        f'확인된 디테일/핏/포인트: {known or "명시 입력 없음"}',
         f'확인된 원단 특징: {material or "미입력"}',
         f'실측: {measurement or "미입력"}',
         '섹션 역할 배분:',

@@ -177,7 +177,8 @@ class RepoTests(unittest.TestCase):
         self.f['chat_with_retry']=fake_chat_with_retry
         self.f['file_to_content_item']=lambda image: None
         result=self.f['generate_structured_copy'](d,'',[])
-        self.assertEqual(len(calls),2)
+        self.assertLessEqual(len(calls),3)
+        self.assertGreaterEqual(len(calls),2)
         self.assertEqual(len(result['recommend_lines']),4)
         self.assertIn('탈부착', str(calls[0]['messages']))
         self.assertIn('recommend_lines', str(calls[1]['messages']))
@@ -225,7 +226,8 @@ class QualityGateRegressionTests(unittest.TestCase):
         self.f['chat_with_retry'] = fake_chat_with_retry
         self.f['file_to_content_item'] = lambda image: {'type':'image_url','image_url':{'url':'data:image/jpeg;base64,ZmFrZQ=='}}
         generated = self.f['generate_structured_copy'](d, '', ['image1','image2'])
-        self.assertEqual(len(calls), 2)
+        self.assertLessEqual(len(calls),3)
+        self.assertGreaterEqual(len(calls),2)
         self.assertEqual(generated['md_sections']['fit'], draft['md_sections']['fit'])
         self.assertEqual(len(calls[0]['messages'][1]['content']),3)
         self.assertEqual(len(calls[1]['messages'][1]['content']),3)
@@ -355,6 +357,99 @@ class EditorialRegressionTests(unittest.TestCase):
         self.assertNotIn('미리 입어 본 착용후기',assembled)
         self.assertNotIn('✓쇼핑에 꼭 참고하세요',assembled)
         self.assertEqual(assembled.count('────────────────────────────────────────'),1)
+
+class ActualOutputEditorialTests(unittest.TestCase):
+    """2026-10-28 jacket outputs: flag concrete failures that passed prior QA."""
+    @staticmethod
+    def jacket():
+        return EditorialRegressionTests.jacket()
+
+    def test_purchase_motive_grounded_in_input(self):
+        from quality_engine import purchase_motive
+        d=self.jacket()
+        self.assertIn('털 빠짐', purchase_motive(d))
+        self.assertIn('구김', purchase_motive(product('슬랙스')))
+        self.assertNotIn('털 빠짐', purchase_motive(product('야상')))
+
+    def test_actual_weak_jacket_flags_issues(self):
+        d=self.jacket()
+        draft=draft_for(product('야상'))
+        draft['md_sections']['choice']=[
+            '보송 뽀글 립니트 자켓 (2 color)은 포근한 질감과 도톰한 볼륨감으로 쌀쌀한 날씨에 적합합니다.',
+            '털 빠짐이 거의 없고, 부드러운 촉감으로 피부에 편안하게 닿아 착용감이 우수합니다.',
+            'FREE 사이즈로 다양한 체형에 잘 맞아 외출복으로 추천드립니다.',
+        ]
+        draft['md_sections']['fabric']=[
+            '폴리에스터 100%의 뽀글이 원단은 포근한 질감을 제공합니다.',
+            '털 빠짐이 거의 없고 부드러운 촉감입니다.',
+        ]
+        draft['md_sections']['fit']=['FREE 사이즈로 77까지 추천드리며 다양한 체형에 적합한 핏을 제공합니다.',
+                                     '어깨단면 51cm, 총길이 58cm로 적당한 길이감이 특징입니다.']
+        draft['review_lines']=['털 빠짐이 거의 없어 깔끔하게 착용할 수 있습니다.',
+                               '폴리에스터 소재로 관리가 용이합니다.',
+                               'FREE 사이즈로 다양한 체형에 잘 맞습니다.',
+                               '보온성이 뛰어나 쌀쌀한 날씨에 적합합니다.']
+        draft['size_tips']['55']=['어깨와 가슴둘레가 넉넉하여 편안하게 착용 가능합니다.',
+                                  '총길이 58cm로 힙을 살짝 덮어주는 길이감입니다.']
+        findings=editorial_issues(draft,d)
+        self.assertTrue(any('상품명으로 시작' in x for x in findings), findings)
+        self.assertTrue(any('핵심 가슴둘레' in x for x in findings), findings)
+        self.assertTrue(any('반복' in x for x in findings), findings)
+        self.assertTrue(any('보온성' in x for x in findings), findings)
+        self.assertTrue(any('힙' in x for x in findings), findings)
+        self.assertTrue(any('체크 포인트' in x for x in findings), findings)
+        self.assertTrue(any('적당' in x for x in findings), findings)
+
+    def test_bulky_question_not_answered_by_generic_size_claim(self):
+        d=self.jacket()
+        draft=draft_for(product('슬랙스'))
+        draft['faqs'][0]={'q':'Q. 이 자켓은 부해 보일까요?',
+                           'a':'A. 도톰한 볼륨감이 있지만, 실측 사이즈를 참고하면 다양한 체형에 적합합니다.'}
+        issues=editorial_issues(draft,d)
+        self.assertTrue(any('FAQ 답변' in x for x in issues), issues)
+
+    def test_unverified_layering_and_length_claims_rejected(self):
+        d=self.jacket()
+        draft=draft_for(product('야상'))
+        draft['size_tips']['66half']=['이너를 입어도 불편함이 없습니다.', '보온성이 뛰어난 실루엣입니다.']
+        issues=editorial_issues(draft,d)
+        self.assertTrue(any('이너' in x for x in issues),issues)
+        self.assertTrue(any('보온성' in x for x in issues),issues)
+
+    def test_prompt_sets_clear_customer_value_vs_spec_dump(self):
+        d=self.jacket()
+        prompt=app_functions()['build_generation_prompt'](d,'')
+        for x in ('고객 고민','가슴둘레','입력값','체크 포인트','선택 이유'):
+            self.assertIn(x,prompt)
+
+    def test_targeted_third_revision_is_chosen_only_if_better(self):
+        import copy
+        d=self.jacket()
+        weak=draft_for(product('야상'))
+        weak['md_sections']['choice']=[d['display_name']+'은 포근하고 도톰합니다.']
+        weak['faqs']=[{'q':'Q. 소재가 무엇인가요?', 'a':'A. 폴리에스터 100%입니다.'}]*4
+        strong=copy.deepcopy(weak)
+        strong['md_sections']['choice']=['뽀글이 소재의 털 빠짐이 걱정되셨다면 이 원단을 눈여겨보세요.',
+                                          '털 빠짐이 거의 없다고 입력된 소재로 관리 부담을 덜 수 있습니다.']
+        strong['faqs']=[{'q':'Q. 부해 보이지 않을까요?', 'a':'A. 도톰한 뽀글이 질감이라 체형에 따라 볼륨감이 다르게 느껴질 수 있습니다. 가슴둘레 실측 116cm를 평소 옷과 비교해 보세요.'},
+                        {'q':'Q. 두꺼운 이너를 입어도 될까요?', 'a':'A. 이너 착용 여유는 확정하기 어렵습니다. 평소 자켓의 가슴둘레 116cm와 비교해 확인하세요.'},
+                        {'q':'Q. 관리가 번거로운가요?', 'a':'A. 건조기는 금지입니다. 드라이클리닝과 손세탁 권장 안내를 확인해 주세요.'},
+                        {'q':'Q. 평소 슬랙스와 코디가 될까요?', 'a':'A. 차콜은 차분한 코디, 베이지는 부드러운 톤의 코디에 활용해 보세요.'}]
+        strong['review_lines']=['가슴둘레 116cm를 기존 자켓과 비교해 보세요.','총장 58cm를 평소 아우터와 비교해 보세요.',
+                                '뽀글이 원단의 표면감을 확인해 보세요.','건조기를 피하고 케어라벨을 살펴보세요.']
+        strong['md_sections']['fit']=['가슴둘레 116cm와 어깨단면 51cm 실측을 평소 자켓과 비교해 보세요.']
+        calls=[]
+        responses=[weak,weak,strong]
+        def fake_chat_with_retry(**kwargs):
+            calls.append(kwargs)
+            result=responses.pop(0)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(result,ensure_ascii=False)))])
+        f=app_functions()
+        f['chat_with_retry']=fake_chat_with_retry
+        result=f['generate_structured_copy'](d,'',[])
+        self.assertEqual(len(calls),3)
+        self.assertEqual(result['md_sections']['choice'],strong['md_sections']['choice'])
+
 
 if __name__ == '__main__':
     unittest.main()

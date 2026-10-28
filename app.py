@@ -29,6 +29,7 @@ for key, default in [
     ("generated_result", ""),
     ("generated_docx", b""),
     ("generated_file_stem", "page_builder"),
+    ("generated_issues", []),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -254,6 +255,7 @@ def reset_all():
     st.session_state.generated_result = ""
     st.session_state.generated_docx = b""
     st.session_state.generated_file_stem = "page_builder"
+    st.session_state.generated_issues = []
 
 
 # ─────────────────────────────────────────────
@@ -304,6 +306,17 @@ def build_generation_prompt(data, additional_request):
 
 [이 상품만의 편집 설계도]
 {build_editorial_brief(data)}
+
+[반드시 지켜야 할 MD 편집 원칙]
+- 첫 번째 소제목은 상품명·소재·컬러·FREE사이즈를 열거하며 시작하지 마세요. 고객이 구매 전에 느끼는 한 가지 고민을 고르고, 확인된 상품 장점이 어떻게 그 고민을 덜어 줄지 설명하세요. 고객 고민을 끼워 맞추거나 없는 장점을 만들지 마세요.
+- 사진이 있으면 소재 표면, 카라·소매·밑단·여밈·장식 등 눈에 보이는 특징을 살펴보고 사진에서 명확히 확인된 요소만 쓰세요. 제품명에 '립니트'가 있어도 위치·형태가 보이지 않으면 임의로 추정하지 마세요.
+- 첫 섹션에 사용한 근거를 두 번째 섹션에서 장황하게 반복하지 마세요. 1절은 고객의 선택 이유, 2절은 실제 질감·소재 특성, 3절은 가슴둘레·어깨·총장 등 유용한 실측, 4절은 고객 옷장 속 구체적인 코디입니다.
+- 자켓·상의에서 상체 여유나 부해 보임을 다룰 때 입력에 가슴둘레 수치가 있으면 해당 숫자를 우선 활용하되, 입었을 때 날씬함·편안함은 실착 근거 없이 보장하지 마세요.
+- 58cm 등 총장 숫자만으로 힙을 덮는다고 결론 내리지 마세요. '실측 총장을 평소 자켓과 비교하세요'가 안전합니다.
+- 사이즈팁 4개는 동일한 '여유롭다/편안하다' 표현을 바꾸어 반복하지 마세요. 55~77 각각 판단할 실측 위치와 체형 차이를 다르게 알려주고 실제 모델 실착 경험은 지어내지 마세요.
+- FAQ는 '부해 보일까요?'라고 물으면 원단 볼륨·핏과 개인차를 정직하게 답하세요. '실측을 참고하면 적합합니다'만 쓰지 마세요. 질문에 먼저 답하고 근거/조건을 설명하세요.
+- '착용 전 체크 포인트'는 스펙 재진술이 아닙니다. 최소 2개는 실제로 비교·확인할 행동을 설명하세요. 후기를 꾸미지 마세요.
+- 정보를 늘리기 위해 같은 말을 반복하지 말고, 확인되지 않은 착용·보온·관리 효과를 약속하지 마세요.
 
 [작성 순서]
 1. 입력에서 증명되는 상품 특징/소재/장점/주의사항을 머릿속에 정리하세요.
@@ -376,6 +389,9 @@ def generate_structured_copy(data, additional_request, uploaded_images):
         "근거 없는 개인 착용 경험·절대 표현·존재하지 않는 컬러는 제거하세요. "
         "소재가 폴리에스터라면 양털/울 원료로 오인되게 쓰지 마세요. "
         "실제 착용 데이터 없는 사이즈팁의 무조건적 핏 보장·체형 효과는 금지합니다. "
+        "특히 선택 이유가 상품명과 소재 소개로만 시작하지 않는지, 자켓의 가슴둘레 실측이 핏 설명에 반영되는지, "
+        "FAQ가 질문에 직접 답하는지, 착용 전 체크포인트가 실제 확인 행동인지 확인하고 고치세요. "
+        "총장으로 힙을 덮는다고 단정하거나 이너 착용 편안함·뛰어난 보온성을 지어내지 마세요. "
     )
     if original_issues or editorial_findings:
         editor_instructions += "\n[실제 검사에서 발견된 문제]\n" + "\n".join("- " + x for x in original_issues + editorial_findings)
@@ -404,8 +420,34 @@ def generate_structured_copy(data, additional_request, uploaded_images):
 
     complete = [candidate for candidate in candidates if not check_structure(candidate)]
     if complete:
-        # 같은 점수에서는 실제 문장 편집을 거친 최신 결과를 선택한다.
-        return soften_unverified_claims(min(reversed(complete), key=rank), data)
+        # 1차 평가에서 남은 명백한 품질 문제는 한 번만 지목하여 재편집한다.
+        best = min(reversed(complete), key=rank)
+        remaining = editorial_issues(best, data, additional_request)
+        if remaining:
+            repair_prompt = (
+                "[실제 상품 원고 오류 수정 — 원고 전체를 완성된 JSON으로 반환]\n"
+                "현재 문장을 길게 늘리지 말고 아래 지적 사항을 실질적으로 고치세요. "
+                "고객의 선택 이유, 핵심 실측, 구체적인 FAQ 답변을 우선하고, "
+                "입력되지 않은 옷의 형태·착용 경험·기능은 지어내지 마세요. "
+                "기존 JSON 키, 추천 4개/체크포인트 4개/FAQ 4개/사이즈팁 각 2개를 유지하세요.\n"
+                + "\n".join("- " + x for x in remaining)
+                + "\n[현재 원고]\n" + json.dumps(best, ensure_ascii=False)
+                + "\n[원상품 근거]\n" + prompt
+            )
+            repair_messages = ([{"type": "text", "text": repair_prompt}] + image_items) if image_items else repair_prompt
+            try:
+                repaired = chat_with_retry(
+                    model="gpt-4o",
+                    messages=[{"role": "system", "content": "상품 근거만을 사용하는 한국어 MD 교열자. 반드시 완전한 JSON 객체만 반환."},
+                              {"role": "user", "content": repair_messages}],
+                    temperature=0.2, max_retries=1,
+                )
+                new_draft = extract_json(repaired.choices[0].message.content)
+                if not check_structure(new_draft) and rank(new_draft) < rank(best):
+                    best = new_draft
+            except Exception:
+                pass  # 최소한 출력 가능한 정상 초안은 유지한다.
+        return soften_unverified_claims(best, data)
 
     # 첫 생성/검수 모두 일부 필수 필드를 누락한 경우에만 표적 복구 1회.
     best = min(reversed(candidates), key=rank)
@@ -1012,10 +1054,15 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
     # 세션에 저장 — TXT/HWP 버튼이 다운로드 후에도 사라지지 않음
     st.session_state.generated_result = result
     st.session_state.generated_docx = result_to_docx_bytes(result)
+    st.session_state.generated_issues = editorial_issues(structured, data, additional_request)
     st.session_state.generated_file_stem = (display_name or "page_builder").replace(" ", "_")
 
 # ─── 결과 표시 (세션 기반) ───
 if st.session_state.generated_result:
+    if st.session_state.generated_issues:
+        with st.expander("원고 사실확인 필요 항목 (출력은 가능합니다)", expanded=False):
+            for issue in st.session_state.generated_issues:
+                st.write("• " + issue)
     st.text_area("결과", st.session_state.generated_result, height=1200)
     c1, c2 = st.columns(2)
     with c1:
