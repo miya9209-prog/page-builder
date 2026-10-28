@@ -18,7 +18,6 @@ from openai import OpenAI, RateLimitError
 # The separate quality_engine.py is retained for offline tests and maintenance.
 # Both copies originate from the same V5 module in this release.
 # === EMBEDDED QUALITY ENGINE BEGIN ===
-"""상품별 원고 검증·편집 모듈. Streamlit/외부 API 호출 없음."""
 import re
 from typing import Any, Dict, List
 
