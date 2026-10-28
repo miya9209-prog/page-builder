@@ -224,3 +224,156 @@ def natural_wrap(text: str, max_chars: int = 24) -> List[str]:
         if current:
             lines.append(current)
     return lines
+
+
+# ── Editorial QA: the previous release checked length and broad term presence,
+# but missed factual-color mismatches, repetitive FAQ, unfounded testimonials and
+# exaggerated material claims observed in real MISHARP outputs.
+KNOWN_COLORS = (
+    "아이보리", "오프화이트", "화이트", "블랙", "차콜", "베이지", "네이비", "그레이",
+    "카키", "브라운", "크림", "핑크", "블루", "레드", "퍼플", "민트", "그린",
+    "버건디", "와인", "옐로우", "오트밀", "연그레이", "진그레이", "멜란지", "코랄",
+)
+BASIC_FAQ_PATTERNS = (
+    r"^(?:소재|원단)(?:가|는|는요|는 무엇인가요|는 어떤가요|가 뭔가요)",
+    r"^사이즈(?:가|는|는요|가 어떻게 되나요|는 어떻게 되나요)",
+    r"^컬러(?:가|는|옵션|는요)",
+    r"^색상(?:이|은|종류)",
+    r"^(?:어떤|무슨) 소재",
+)
+
+
+def editorial_issues(draft: Dict[str, Any], data: Dict[str, Any], additional_request: str = "") -> List[str]:
+    """Warnings intended for a targeted LLM revision, not a hard download gate."""
+    if not isinstance(draft, dict):
+        return ["원고 JSON이 아닙니다."]
+    issues = []
+    content = content_string(draft)
+    # Colors that appear in generated claims must be present in entered color
+    # or product name. Do not compare against background examples in prompts.
+    allowed = compact(data.get('color', '')) + ' ' + compact(data.get('display_name', ''))
+    unsupported_colors = sorted({c for c in KNOWN_COLORS if c in content and c not in allowed
+                                 and not any(c in other for other in KNOWN_COLORS if other in allowed)})
+    if unsupported_colors:
+        issues.append('입력되지 않은 상품 색상 언급: ' + ', '.join(unsupported_colors))
+
+    full_input = ' '.join(compact(v) for v in data.values()) + ' ' + compact(additional_request)
+    if re.search(r"털\s*빠짐(?:이)?\s*거의\s*없|털\s*빠짐(?:이)?\s*적", full_input):
+        if re.search(r"털\s*빠짐\s*(?:이\s*)?(?:전혀\s*)?없는|털\s*빠짐\s*제로|털\s*빠짐\s*없습니다", content):
+            issues.append("'털 빠짐이 거의 없음'을 '털 빠짐 전혀 없음'으로 과장했습니다.")
+    if '폴리에스터' in full_input and re.search(r"(?:양털|울)(?:\s*100%|\s*소재|\s*특유의)", content):
+        # '양털 같은 질감'은 허용하지만 폴리에스터를 실제 양털로 오인시키는 표현은 금지.
+        if not re.search(r"(?:양털|울)\s*(?:같|처럼|을\s*닮|을\s*연상)", content):
+            issues.append('합성섬유를 실제 양털/울 소재처럼 오인시키는 표현이 있습니다.')
+    review = draft.get('review_lines', [])
+    if isinstance(review,list):
+        reviewtext=' '.join(map(compact, review))
+        if re.search(r"(?:입어\s*보니|입었더니|만져\s*보니|저는\s*|제가\s*|착용했는데|입고\s*나가니)", reviewtext) and not re.search(r"실제\s*(?:착용|후기)|모델\s*피드백", full_input):
+            issues.append('실제 후기 근거 없이 1인칭 착용 경험을 꾸몄습니다.')
+
+    faqs=draft.get('faqs',[])
+    if isinstance(faqs,list):
+        basic = 0
+        questions=[]
+        for faq in faqs[:4]:
+            if not isinstance(faq,dict): continue
+            q = re.sub(r"^Q\.\s*",'',compact(faq.get('q','')),flags=re.I)
+            questions.append(q)
+            if any(re.search(pat,q) for pat in BASIC_FAQ_PATTERNS): basic += 1
+        if basic >= 2:
+            issues.append('FAQ가 기본정보 재진술에 치우쳤습니다. 실제 구매 망설임을 다루세요.')
+        if len(set(questions)) < len(questions):
+            issues.append('FAQ 질문이 중복됩니다.')
+
+    md=draft.get('md_sections',{})
+    if isinstance(md,dict):
+        sections={key:' '.join(map(compact,md.get(key,[]))) if isinstance(md.get(key),list) else '' for key in MD_KEYS}
+        choice=sections['choice']
+        # Don't repeat composition, sizes and colors as the main selling point.
+        material=compact(data.get('material',''))
+        if (choice.count('사이즈') + choice.count('컬러') + choice.count('폴리에스터') >= 3
+                and not any(x in choice for x in ('걱정', '고민', '찾으', '불편', '마음', '포인트', '선택', '좋은 이유'))):
+            issues.append('선택 이유가 상품 기본정보 나열에 치우쳤습니다. 고객 고민과 구매 가치를 연결하세요.')
+        # Repetition across MD section roles: exact product phrases rather than common connectors.
+        for feature in ('털 빠짐', '폴리에스터 100', 'FREE 사이즈', '가슴둘레 116', '베이지와 차콜', '편안한 착용감'):
+            if sum(feature in s for s in sections.values()) >= 3:
+                issues.append(f"MD원고 영역 사이에 '{feature}' 설명이 반복됩니다.")
+        measure=' '.join(str(x) for x in data.get('measurement_lines', []))
+        # A jacket with a stated 58cm total length should not be described as hip-covering.
+        if re.search(r'(?:총길이|총장)\s*[:=]?\s*(?:5[0-9])(?:\D|$)',measure) and '힙을 덮' in content:
+            issues.append('입력된 짧은 총장만으로 힙을 덮는다고 단정했습니다.')
+
+    tips=draft.get('size_tips',{})
+    if isinstance(tips,dict):
+        tiptext=' '.join(str(v) for v in tips.values())
+        if any(x in tiptext for x in ('드라마틱한', '무조건', '누구나', '완벽한 체형', '활동성이 좋습니다')):
+            issues.append('실제 착용 근거 없는 사이즈팁의 과장·확정 표현이 있습니다.')
+    return list(dict.fromkeys(issues))
+
+
+def score_editorial(draft: Dict[str, Any], data: Dict[str, Any], additional_request: str = "") -> tuple:
+    """Prioritize actual product accuracy and useful FAQ over raw paragraph length."""
+    structural=check_structure(draft)
+    content=content_string(draft) if isinstance(draft,dict) else ''
+    # Keep automatic selection conservative; a revision should improve real issues.
+    major=editorial_issues(draft, data, additional_request)
+    coverage=check_quality(draft,data,additional_request)
+    return (len(structural),len(major),len(coverage),-len(set(meaningful_terms(content))))
+
+
+def soften_unverified_claims(draft: Dict[str, Any], data: Dict[str, Any]) -> Dict[str, Any]:
+    """Only safe, deterministic softening; never invent a new product feature."""
+    import copy
+    out=copy.deepcopy(draft)
+    input_text=' '.join(compact(v) for v in data.values())
+    if not re.search(r"털\s*빠짐(?:이)?\s*(?:거의\s*없|적)",input_text):
+        return out
+    def soften(s):
+        s=re.sub(r"털\s*빠짐\s*(?:이\s*)?(?:전혀\s*)?없는",'털 빠짐이 거의 없는',s)
+        s=re.sub(r"털\s*빠짐\s*(?:이\s*)?없습니다",'털 빠짐이 거의 없습니다',s)
+        return s
+    for key in ('recommend_lines','review_lines','material_desc_lines'):
+        if isinstance(out.get(key),list):
+            out[key]=[soften(s) if isinstance(s,str) else s for s in out[key]]
+    if isinstance(out.get('faqs'),list):
+        for f in out['faqs']:
+            if isinstance(f,dict):
+                for k in ('q','a'):
+                    if isinstance(f.get(k),str): f[k]=soften(f[k])
+    if isinstance(out.get('md_sections'),dict):
+        for key,val in out['md_sections'].items():
+            if isinstance(val,list): out['md_sections'][key]=[soften(s) if isinstance(s,str) else s for s in val]
+    if isinstance(out.get('size_tips'),dict):
+        for key,val in out['size_tips'].items():
+            if isinstance(val,list): out['size_tips'][key]=[soften(s) if isinstance(s,str) else s for s in val]
+    return out
+
+
+def build_editorial_brief(data: Dict[str, Any]) -> str:
+    """Specific editorial allocation; no cross-product sales claims."""
+    name=compact(data.get('display_name',''))
+    detail=compact(data.get('detail_tip',''))
+    fit=compact(data.get('fit',''))
+    benefits=compact(data.get('appeal_points',''))
+    material=compact(data.get('material_desc_raw',''))
+    measurement=' / '.join(str(v) for v in data.get('measurement_lines',[]))
+    known='; '.join(x for x in (detail,fit,benefits) if x)
+    gaps = []
+    if not detail: gaps.append('디테일 특징: 미입력 — 사진에서 보이지 않으면 장식·넥·여밈 방식 추정 금지')
+    if not fit: gaps.append('핏·실루엣: 미입력 — 사진/실측 근거 없이 체형 커버 효과 확정 금지')
+    if not benefits: gaps.append('주요 어필 포인트: 미입력 — 구매 편익은 확인된 소재·구조를 토대로만 설명')
+    return '\n'.join([
+        f'상품: {name}',f'확인된 디테일/핏/포인트: {known or "명시 입력 없음"}',
+        f'확인된 원단 특징: {material or "미입력"}',
+        f'실측: {measurement or "미입력"}',
+        '섹션 역할 배분:',
+        '1) choice: 고객이 겪는 구체적인 구매 고민 → 해당 상품의 확인된 특징 → 선택할 이유. 소재 성분·컬러·사이즈 나열 금지',
+        '2) fabric: 혼용률·촉감·질감·관리 주의. 두께/보온성은 직접 확인된 경우만. 의류 소재와 색상 혼동 금지',
+        '3) fit: 확인된 실측, 사이즈 표기, 형태/핏. 숫자만으로 착용감을 보증하지 않기. 총장으로 힙커버를 단정하지 않기',
+        '4) occasion: 상품의 형태·색상에 근거한 구체적인 코디 2~3가지와 TPO. 상품 특징 요약 반복 금지',
+        'FAQ: 단순 색상·소재·사이즈를 묻는 기본정보 질문보다 부해 보임/77체형·이너 여유/구김·관리/실제 코디 등 구매 불안을 다루되 답변은 조건부·근거 중심',
+        '추천문장: 다른 니즈 네 가지. 실측/촉감/관리/스타일 등 근거 있는 특징을 고객 문제와 연결',
+        '착용 체크 포인트: 실제 후기 근거가 없으면 1인칭 경험담 대신 확인해야 할 실용 포인트 4개',
+        '체형팁: 55/66/66반/77별 실측 비교 시 참고사항만; 모델 실착 근거 없이 활동성·힙덮음·슬림효과 단정 금지',
+        '입력 정보 부족: ' + ('; '.join(gaps) if gaps else '상세 입력값 사용 가능'),
+    ])

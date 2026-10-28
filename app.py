@@ -14,7 +14,8 @@ from docx.shared import Pt
 from openai import OpenAI, RateLimitError
 
 from quality_engine import (TIP_PROFILES, fact_report, check_quality, check_structure,
-                            normalize_generated_strict, natural_wrap)
+                            normalize_generated_strict, natural_wrap, editorial_issues,
+                            score_editorial, build_editorial_brief, soften_unverified_claims)
 
 st.set_page_config(page_title="PAGE BUILDER", layout="wide")
 
@@ -301,6 +302,9 @@ def build_generation_prompt(data, additional_request):
 [상품 고유 정보를 빠뜨리지 않기 위한 체크리스트]
 {fact_report(data, additional_request)}
 
+[이 상품만의 편집 설계도]
+{build_editorial_brief(data)}
+
 [작성 순서]
 1. 입력에서 증명되는 상품 특징/소재/장점/주의사항을 머릿속에 정리하세요.
 2. 겉보기에 그럴듯한 일반론 대신 '어떤 디테일이 고객의 어떤 불편을 해소하는지' 근거를 연결하세요.
@@ -312,14 +316,14 @@ def build_generation_prompt(data, additional_request):
 8. 입력 문장을 그대로 복사하지 말고, 그 의미를 유지하며 자연스럽게 재구성하세요.
 
 [문장 품질]
-- MD원고는 4개 소제목으로 작성합니다. 근거가 충분하면 영역마다 구체적인 문단 3~5개를 쓰되, 입력·사진으로 확인된 정보가 적으면 2~3개라도 정확하게 작성합니다. 글자 수를 채우려고 사실을 만들거나 빈말을 반복하지 마세요.
+- MD원고는 4개 소제목으로 작성합니다. 각 영역에 역할이 겹치지 않는 2~4개 문단을 쓰되, 입력·사진으로 확인된 정보가 적으면 짧아도 정확하게 작성합니다. 글자 수를 채우려고 사실을 만들거나 빈말을 반복하지 마세요.
 - 이 단계에서 한 줄 20~24자에 억지로 맞추지 마세요. 출력 함수가 자연스럽게 줄바꿈합니다. 의미와 문장 흐름이 우선입니다.
 - 각 영역의 문장은 전개가 자연스럽고 반복 없이 구체적이어야 합니다. '다양한 활용이 가능합니다' 같은 빈 문구로 채우지 마세요.
-- choice: 다른 상품과의 차이·선택 이유. fabric: 실제 혼용 소재/촉감/두께 (입력 근거 있을 때만). fit: 체형, 사이즈, 실측. occasion: 구체적인 코디와 착용 장면. 핏·디테일·어필포인트 칸이 비어 있으면 실측과 사진에서 확인되는 사실만 사용하고, 정보를 지어내거나 115자를 강제로 채우지 마세요.
+- choice: 고객의 실제 고민부터 시작해 상품 고유의 근거 있는 해결 가치를 소개합니다. 성분/컬러/사이즈 정보 나열로 채우지 마세요. fabric: 실제 혼용 소재/촉감/두께 (입력 근거 있을 때만). fit: 체형, 사이즈, 실측. occasion: 구체적인 코디와 착용 장면. 핏·디테일·어필포인트 칸이 비어 있으면 실측과 사진에서 확인되는 사실만 사용하고, 정보를 지어내거나 115자를 강제로 채우지 마세요.
 - 추천문장 4개는 모두 자연스러운 '~분'으로 끝납니다. '분께', '추천합니다', '권해드립니다', '입니다 분' 금지. 각기 다른 구매 니즈를 제시하세요.
-- review_lines 4개는 입을 때 확인할 포인트를 자연스러운 친근한 톤으로 작성하세요. 실제 직원/모델이 직접 착용했다는 근거가 없으면 가짜 경험담이나 인용을 꾸며내지 마세요.
-- FAQ 4개는 입력 상품에 맞는 현실적인 구매 장애 요인과 근거 있는 답변으로 작성하세요. 모르면 모른다고 하거나 실측 확인을 안내하세요.
-- 소재설명 3문장은 소재·조직·특성을 가급적 구체적으로 설명하되 확인되지 않은 기능은 주장하지 마세요.
+- review_lines 4개는 MD/모델이 실물 착용 시 확인할 점을 고객도 이해하기 쉬운 자연스러운 문장으로 작성하세요. 현재 입력에 실제 착용후기가 없으면 '입어보니/입었더니/저는/제가/정말 마음에 들어요' 등 고객이나 직원의 가짜 실착 인용을 절대 쓰지 마세요.
+- FAQ 4개는 '소재가 무엇인가요/사이즈가 어떻게 되나요/색상은 무엇인가요' 같은 상품 기본정보 복사형 질문을 피하고, 실제 망설임 4종을 구체적으로 다루세요. 부해 보일지, 기존 옷과 맞을지, 관리가 번거로울지, 코디가 쉬울지 같은 불안을 이 상품의 실측·소재·특징으로 답하세요. 확인할 수 없는 답변은 조건부로 안내하세요.
+- 소재설명 3문장은 소재·조직·특성을 구체적으로 설명하되 확인되지 않은 기능은 주장하지 마세요. '털 빠짐이 거의 없음'은 '털 빠짐 전혀 없음'으로 과장하지 마세요. 폴리에스터 뽀글이를 실제 울/양털 원료로 오인시키지 마세요. 입력되지 않은 다른 컬러를 언급하지 마세요.
 - 사이즈팁: {profiles}. 각 사이즈별로 이 수치가 가리키는 체형 차이와 상품의 실제 핏 정보를 고려한 2문장. 특정 체형에 무조건 잘 맞는다거나 극적인 커버 효과를 확정하지 마세요. 입력 실측이 부족하면 개인차/실측 확인을 안내하세요.
 - '쇼핑에 꼭 참고하세요', '[구매 전 꼭 확인해 주세요]', 마무리 인사 등은 작성·출력하지 않습니다.
 
@@ -364,8 +368,17 @@ def generate_structured_copy(data, additional_request, uploaded_images):
         "사진에서 확인 가능한 형태/구조만 단정하세요. "
         "형식보다 입력정보 반영과 자연스러운 문장이 중요합니다. JSON 객체만 답하세요."
     )
-    if original_issues:
-        editor_instructions += "\n[실제 검사에서 발견된 문제]\n" + "\n".join("- " + x for x in original_issues)
+    editorial_findings = editorial_issues(raw, data, additional_request)
+    editor_instructions += (
+        " 첫 선택 이유는 상품 스펙을 다시 나열하지 말고 고객의 고민과 선택 가치를 연결하세요. "
+        "소재·핏·코디 각 섹션의 내용을 중복하지 말고 역할별로 배분하세요. "
+        "FAQ는 단순 정보조회형을 줄이고 실제 구매 망설임을 확인된 사실로 해결하세요. "
+        "근거 없는 개인 착용 경험·절대 표현·존재하지 않는 컬러는 제거하세요. "
+        "소재가 폴리에스터라면 양털/울 원료로 오인되게 쓰지 마세요. "
+        "실제 착용 데이터 없는 사이즈팁의 무조건적 핏 보장·체형 효과는 금지합니다. "
+    )
+    if original_issues or editorial_findings:
+        editor_instructions += "\n[실제 검사에서 발견된 문제]\n" + "\n".join("- " + x for x in original_issues + editorial_findings)
     review_text = (
         "[이 상품 입력 정보]\n" + prompt
         + "\n[검토·개선할 초안 JSON]\n" + json.dumps(raw, ensure_ascii=False)
@@ -383,16 +396,16 @@ def generate_structured_copy(data, additional_request, uploaded_images):
     except Exception:
         # 원본에 모든 필수 영역이 있으면 편집 호출 문제만으로 다운로드를 차단하지 않는다.
         if not check_structure(raw):
-            return raw
+            return soften_unverified_claims(raw, data)
         raise
 
     def rank(candidate):
-        return (len(check_structure(candidate)), len(check_quality(candidate, data, additional_request)))
+        return score_editorial(candidate, data, additional_request)
 
     complete = [candidate for candidate in candidates if not check_structure(candidate)]
     if complete:
         # 같은 점수에서는 실제 문장 편집을 거친 최신 결과를 선택한다.
-        return min(reversed(complete), key=rank)
+        return soften_unverified_claims(min(reversed(complete), key=rank), data)
 
     # 첫 생성/검수 모두 일부 필수 필드를 누락한 경우에만 표적 복구 1회.
     best = min(reversed(candidates), key=rank)
@@ -415,7 +428,7 @@ def generate_structured_copy(data, additional_request, uploaded_images):
     )
     fixed = extract_json(fixed_result.choices[0].message.content)
     if not check_structure(fixed):
-        return fixed
+        return soften_unverified_claims(fixed, data)
     raise ValueError("필수 원고 항목이 누락되어 출력할 수 없습니다: " + " / ".join(check_structure(fixed)[:4]))
 
 
@@ -656,7 +669,7 @@ def normalize_generated(result, data):
 
 def render_text_source(structured):
     rec_lines = ''.join([f"▪ {x}<br>\n" for x in structured['recommend_lines']])
-    review_lines = ''.join([f'"{x}"<br>\n' for x in structured['review_lines']])
+    review_lines = ''.join([f'{x}<br>\n' for x in structured['review_lines']])
 
     faq_parts = []
     for idx, faq in enumerate(structured['faqs']):
@@ -679,7 +692,7 @@ def render_text_source(structured):
         "<br><br><br><br>\n\n"
         '<div style="text-align:center;">\n'
         '<h3 style="margin-bottom:0;">\n'
-        "✓ 미리 입어 본 착용후기 (모델/스텝/MD리뷰)</h3>\n"
+        "✓ 착용 전 체크 포인트 (모델/스텝/MD 참고)</h3>\n"
         "<br>\n"
         '<p><span style="font-size:14px; line-height:1.8;">\n'
         + review_lines

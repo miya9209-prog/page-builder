@@ -12,7 +12,8 @@ HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
 from quality_engine import (
     TIP_PROFILES, check_quality, normalize_generated_strict,
-    natural_wrap, check_structure,
+    natural_wrap, check_structure, editorial_issues, score_editorial,
+    build_editorial_brief, soften_unverified_claims,
 )
 
 
@@ -31,6 +32,8 @@ def app_functions():
     from quality_engine import fact_report
     namespace = dict(json=json, io=io, re=re, TIP_PROFILES=TIP_PROFILES,
                      fact_report=fact_report, check_quality=check_quality, check_structure=check_structure,
+                     build_editorial_brief=build_editorial_brief, editorial_issues=editorial_issues,
+                     score_editorial=score_editorial, soften_unverified_claims=soften_unverified_claims,
                      normalize_generated_strict=normalize_generated_strict,
                      natural_wrap=natural_wrap, Document=Document, OxmlElement=OxmlElement, qn=qn, Pt=Pt,
                      RateLimitError=RuntimeError, DIVIDER_MARKER="────────────────────────────────────────",
@@ -276,6 +279,82 @@ class QualityGateRegressionTests(unittest.TestCase):
         self.f['chat_with_retry']=fake_chat_with_retry
         self.assertEqual(self.f['generate_structured_copy'](d,'',[]),full)
 
+
+
+class EditorialRegressionTests(unittest.TestCase):
+    """Real 10/28 jacket outputs: misleading colors, exaggerated fur shedding and weak FAQs."""
+    @staticmethod
+    def jacket():
+        return {
+            'display_name':'보송 뽀글 립니트 자켓 (2 color)',
+            'color':'베이지, 차콜','size':'FREE 77까지',
+            'material':'폴리에스터100 (건조기 사용 금지)',
+            'material_desc_raw':'양털 같은 포근한 뽀글이 원단, 부드러운 촉감, 털 빠짐이 거의 없습니다.',
+            'detail_tip':'','fit':'','appeal_points':'', 'etc':'',
+            'washing':'드라이클리닝, 손세탁 가능, 건조기 사용 금지',
+            'measurement_lines':['어깨단면 51 / 가슴둘레 116 / 총길이 58'],
+        }
+
+    def test_warn_unknown_color_and_overstated_shedding(self):
+        d=self.jacket()
+        draft=draft_for(product('블라우스'))
+        draft['recommend_lines']=['털 빠짐 없는 자켓을 찾으시는 분']*4
+        draft['faqs']=[{'q':'Q. 소재가 무엇인가요?', 'a':'A. 폴리에스터'},
+                       {'q':'Q. 사이즈가 어떻게 되나요?', 'a':'A. 77까지'},
+                       {'q':'Q. 컬러 옵션은 무엇인가요?', 'a':'A. 아이보리 입니다'},
+                       {'q':'Q. 건조기 가능하나요?', 'a':'A. 건조기는 금지입니다'}]
+        findings=editorial_issues(draft,d)
+        self.assertTrue(any('아이보리' in x for x in findings),findings)
+        self.assertTrue(any('과장' in x for x in findings),findings)
+        self.assertTrue(any('기본정보' in x for x in findings),findings)
+        softened=soften_unverified_claims(draft,d)
+        self.assertIn('털 빠짐이 거의 없는',softened['recommend_lines'][0])
+        self.assertEqual(draft['recommend_lines'][0],'털 빠짐 없는 자켓을 찾으시는 분')
+
+    def test_warn_unverified_review_experience(self):
+        d=self.jacket()
+        draft=draft_for(product('블라우스'))
+        draft['review_lines'][0]='제가 직접 입어보니 너무 편해요.'
+        issues=editorial_issues(draft,d)
+        self.assertTrue(any('1인칭' in x for x in issues),issues)
+
+    def test_warn_hip_cover_for_short_length(self):
+        d=self.jacket()
+        draft=draft_for(product('야상'))
+        draft['md_sections']['fit']=['총길이 58cm, 힙을 덮는 기장으로 편하게 입습니다.']
+        issues=editorial_issues(draft,d)
+        self.assertTrue(any('힙' in x for x in issues),issues)
+
+    def test_editor_prefers_quality_over_extra_length(self):
+        d=self.jacket()
+        base=draft_for(product('야상'))
+        base['md_sections']['choice']=['뽀글이 소재를 고를 때 털 빠짐 관리가 걱정되셨다면, 털 빠짐이 거의 없는 원단을 먼저 살펴보세요.']
+        base['recommend_lines']=['포근한 원단을 찾으시는 분', '피부 촉감을 중시하시는 분', '두 컬러 중 골라 입고 싶으신 분', '간절기에 가볍게 걸칠 자켓을 찾으시는 분']
+        base['review_lines']=['원단의 질감과 밀도를 확인해 주세요.']*4
+        base['faqs']=[
+            {'q':'Q. 뽀글이 소재 관리가 번거롭지 않을까요?', 'a':'A. 건조기 사용은 금지하고 드라이클리닝 등 표시 세탁법을 따라주세요.'},
+            {'q':'Q. 도톰한 이너를 입어도 괜찮을까요?', 'a':'A. 실측 가슴둘레 116cm를 기존 아우터와 비교해보세요.'},
+            {'q':'Q. 평소 77을 입는데 부해 보일까요?', 'a':'A. 실측과 선호하는 실루엣에 따라 다르니 기존 자켓을 비교해 주세요.'},
+            {'q':'Q. 베이지와 차콜 중 어떤 코디가 좋을까요?', 'a':'A. 평소 즐겨 입는 팬츠 색과 비교해 선택하시면 좋습니다.'},
+        ]
+        weaker=__import__('copy').deepcopy(base)
+        weaker['faqs']=[
+            {'q':'Q. 소재가 무엇인가요?', 'a':'A. 폴리에스터 100%입니다.'},
+            {'q':'Q. 사이즈가 어떻게 되나요?', 'a':'A. FREE 사이즈입니다.'},
+            {'q':'Q. 컬러 옵션은 무엇인가요?', 'a':'A. 아이보리와 차콜입니다.'},
+            {'q':'Q. 세탁은 어떻게 하나요?', 'a':'A. 손세탁합니다.'},
+        ]
+        weaker['md_sections']['choice'] += ['베이지, 차콜 컬러 FREE 사이즈 폴리에스터 100% 소재.' for _ in range(6)]
+        self.assertLess(score_editorial(base,d),score_editorial(weaker,d))
+
+    def test_output_checks_not_fake_testimonials(self):
+        d=product('야상')
+        result=normalize_generated_strict(draft_for(d))
+        assembled=app_functions()['assemble_final_output'](d,result)
+        self.assertIn('✓ 착용 전 체크 포인트',assembled)
+        self.assertNotIn('미리 입어 본 착용후기',assembled)
+        self.assertNotIn('✓쇼핑에 꼭 참고하세요',assembled)
+        self.assertEqual(assembled.count('────────────────────────────────────────'),1)
 
 if __name__ == '__main__':
     unittest.main()
