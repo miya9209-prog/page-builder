@@ -13,6 +13,9 @@ from docx.oxml.ns import qn
 from docx.shared import Pt
 from openai import OpenAI, RateLimitError
 
+from quality_engine import (TIP_PROFILES, fact_report, check_quality,
+                            normalize_generated_strict, natural_wrap)
+
 st.set_page_config(page_title="PAGE BUILDER", layout="wide")
 
 # ─────────────────────────────────────────────
@@ -203,10 +206,6 @@ def format_measurement_lines(lines):
 
 def format_material_line(material):
     mat = (material or "").strip()
-    if not mat:
-        return "(건조기사용금지)"
-    if "(건조기사용금지)" not in mat:
-        mat = mat + " (건조기사용금지)"
     return mat
 
 
@@ -275,176 +274,118 @@ def extract_json(text):
 # 프롬프트 빌더
 # ─────────────────────────────────────────────
 def build_generation_prompt(data, additional_request):
-    measurement_str = " / ".join(data["measurement_lines"]) if data["measurement_lines"] else "입력 없음"
+    """상품 근거 중심 초안. 분량을 강제로 줄여 정보가 누락되지 않도록 한다."""
+    fields = {
+        "상품명": data.get("display_name", ""),
+        "컬러": data.get("color", ""),
+        "사이즈": data.get("size", ""),
+        "소재": data.get("material", ""),
+        "소재설명": data.get("material_desc_raw", ""),
+        "디테일 특징": data.get("detail_tip", ""),
+        "핏·실루엣": data.get("fit", ""),
+        "주요 어필 포인트": data.get("appeal_points", ""),
+        "기타 특징": data.get("etc", ""),
+        "타겟": data.get("target", ""),
+        "세탁방법": data.get("washing", ""),
+        "실측사이즈": data.get("measurement_lines", []),
+        "추가 요청": additional_request or "없음",
+    }
+    raw = json.dumps(fields, ensure_ascii=False, indent=2)
+    profiles = "; ".join(TIP_PROFILES.values())
+    return f"""당신은 미샵(MISHARP)의 4050 여성 패션 상세페이지를 작성하는 전문 MD 카피라이터입니다.
+이번 작업은 문장 수 채우기가 아니라, 입력된 한 상품의 구매 이유를 고객이 이해하도록 정확하고 풍부하게 설명하는 것입니다.
 
-    prompt = (
-        "너는 10년 이상 4050 여성 패션몰 미샵 상세페이지를 써 온 최고 수준의 한국어 커머스 카피라이터다.\n"
-        "실제 고객이 망설이는 이유를 먼저 해소하고 구매를 돕는 고급 원고를 작성한다.\n"
-        "SEO/AEO/GEO를 고려해 상품명, 카테고리, 소재, 핏, 활용 장면, 고객 니즈를 자연스럽게 녹인다.\n\n"
-        "[중요 원칙]\n"
-        "1. 입력 문구를 그대로 복붙하지 말고 자연스럽고 매력적인 문장으로 재작성한다.\n"
-        "2. 없는 디테일은 절대 만들지 않는다. 타이/스카프/포켓/단추/절개 등은 입력 근거가 있을 때만 언급한다.\n"
-        "3. 문장형은 문장형으로, 리스팅형은 리스팅형으로 작성한다.\n"
-        "4. 결과는 반드시 JSON만 출력한다. 코드펜스 절대 금지.\n\n"
-        "[추천 블록 작성 규칙 - 절대 준수]\n"
-        "recommend_lines 4줄은 반드시 아래 형태로만 작성한다:\n"
-        "  예시) 오피스룩부터 하객룩까지 다양하게 활용할 수 있는 블라우스를 찾으시는 분\n"
-        "  예시) 군살을 자연스럽게 커버하면서도 여성스러운 실루엣을 원하시는 분\n"
-        "  예시) 구김 걱정 없이 하루 종일 깔끔하게 입고 싶으신 분\n"
-        "  예시) 브랜드 퀄리티의 고급 소재를 편하게 입고 싶으신 분\n"
-        "절대 금지 표현: 추천합니다, 권해드립니다, 적합합니다, 잘 어울립니다, 분께, 고객님께\n"
-        "모든 문장은 반드시 '분' 또는 '분.'으로 끝나야 한다.\n\n"
-        "[MD원고 작성 규칙]\n"
-        "md_sections.purchase_note 와 md_sections.ending 은 반드시 빈 배열 []로 출력한다.\n"
-        "[구매 전 꼭 확인해 주세요] 섹션은 절대 작성하지 않는다.\n"
-        "마무리 감성 문장은 작성하지 않는다.\n"
-        "MD원고는 choice / fabric / fit / occasion 4개 섹션만 작성한다.\n\n"
-        "[MD원고 문장 스타일 - 매우 중요]\n"
-        "각 배열의 줄(element)은 한 줄에 15~25자 내외로 쓴다. 30자를 절대 넘지 않는다.\n"
-        "의미가 연결되면 다음 줄(다음 element)로 이어 쓰고, 한 element 안에서 완결하지 않아도 된다.\n"
-        "줄 끝을 쉼표(,)로 끝내지 않는다. 자연스럽게 끊되 쉼표 없이 끊는다.\n"
-        "문장은 자연스러운 구어체로 완성한다. 서술형·접속형 모두 허용한다.\n\n"
-        "아래 <style_guide>는 JSON 배열 형태로 된 정확한 출력 예시다. 이 스타일 그대로 작성한다.\n"
-        "단, 예시 문장 자체를 복사하지 말고 입력 상품 정보를 바탕으로 새로 작성한다.\n\n"
-        "<style_guide>\n"
-        '"choice": [\n'
-        '  "미샵의 브랜드 납품의 고급 공정 파트너사 상품",\n'
-        '  "그만큼 자신있는 고퀄리티 상품입니다.",\n'
-        '  "원단에서 입어서의 편안함까지",\n'
-        '  "브랜드급의 매력적인 블라우스입니다.",\n'
-        '  "거기에 고급 부자재까지",\n'
-        '  "완성도를 높인 아이템입니다."\n'
-        "],\n"
-        '"fabric": [\n'
-        '  "겉감과 안감 모두 폴리에스터 100% 소재로",\n'
-        '  "가볍고 내구성이 뛰어납니다.",\n'
-        '  "구김이 적고 형태가 잘 유지되어",\n'
-        '  "오랜 기간 깔끔하게 착용할 수 있습니다."\n'
-        "],\n"
-        '"fit": [\n'
-        '  "FREE 사이즈로 77까지 추천드리며",\n'
-        '  "여유로운 핏으로 체형 구애 없이 착용 가능합니다.",\n'
-        '  "힙을 덮는 기장과 적당한 품으로",\n'
-        '  "편안하게 입으실 수 있습니다."\n'
-        "],\n"
-        '"occasion": [\n'
-        '  "오피스룩, 모임, 데일리 외출 등",\n'
-        '  "격식 있는 자리부터 편안한 일상까지",\n'
-        '  "다양하게 활용할 수 있는 아이템입니다.",\n'
-        '  "시즌에 구애 없이 자주 손이 가는 아이템입니다."\n'
-        "]\n"
-        "</style_guide>\n\n"
-        "[금지] 한 element(줄)에 두 문장을 이어 붙이지 않는다.\n"
-        "[금지] 한 줄 30자 초과 금지. 예) '어떤 하의와도 잘 어울려 다양한 스타일링이 가능합니다.' → 금지(35자)\n"
-        "[금지] 줄 끝 쉼표(,) 금지. [금지] 없는 디테일(봉제, 안감 등) 추가 금지.\n\n"
-        "[입력 데이터]\n"
-        f"- 상품명: {data['display_name']}\n"
-        f"- 컬러: {data['color']}\n"
-        f"- 사이즈: {data['size']}\n"
-        f"- 소재: {data['material']}\n"
-        f"- 소재설명 참고메모: {data['material_desc_raw']}\n"
-        f"- 디테일 특징: {data['detail_tip']}\n"
-        f"- 핏/실루엣: {data['fit']}\n"
-        f"- 주요 어필 포인트: {data['appeal_points']}\n"
-        f"- 기타 특징: {data['etc']}\n"
-        f"- 타겟: {data['target']}\n"
-        f"- 세탁방법: {data['washing']}\n"
-        f"- 실측사이즈: {measurement_str}\n"
-        f"- 추가/수정 요청사항: {additional_request or '없음'}\n\n"
-        "[JSON 스키마]\n"
-        "{\n"
-        '  "material_desc_lines": ["문장1.", "문장2.", "문장3."],\n'
-        '  "recommend_lines": ["~을 찾으시는 분", "~을 원하시는 분", "~하고 싶으신 분", "~을 중요하게 생각하시는 분"],\n'
-        '  "review_lines": ["후기문장1", "후기문장2", "후기문장3", "후기문장4"],\n'
-        '  "faqs": [\n'
-        '    {"q": "Q. 질문1", "a": "A. 답변1"},\n'
-        '    {"q": "Q. 질문2", "a": "A. 답변2"},\n'
-        '    {"q": "Q. 질문3", "a": "A. 답변3"},\n'
-        '    {"q": "Q. 질문4", "a": "A. 답변4"}\n'
-        '  ],\n'
-        '  "shopping_lines": ["참고사항1", "참고사항2", "참고사항3"],\n'
-        '  "md_sections": {\n'
-        '    "choice": ["줄1", "줄2", "줄3", "줄4", "줄5", "줄6"],\n'
-        '    "fabric": ["줄1", "줄2", "줄3", "줄4", "줄5", "줄6"],\n'
-        '    "fit": ["줄1", "줄2", "줄3", "줄4", "줄5", "줄6"],\n'
-        '    "occasion": ["줄1", "줄2", "줄3", "줄4", "줄5", "줄6"],\n'
-        '    "purchase_note": [],\n'
-        '    "ending": []\n'
-        '  },\n'
-        '  "size_tips": {\n'
-        '    "55": ["체형 착용 특징 첫 문장.", "구체적인 핏·실루엣 설명 둘째 문장."],\n'
-        '    "66": ["체형 착용 특징 첫 문장.", "구체적인 핏·실루엣 설명 둘째 문장."],\n'
-        '    "66half": ["체형 착용 특징 첫 문장.", "구체적인 핏·실루엣 설명 둘째 문장."],\n'
-        '    "77": ["체형 착용 특징 첫 문장.", "구체적인 핏·실루엣 설명 둘째 문장."]\n'
-        '  }\n'
-        "}\n\n"
-        "[각 항목 작성 기준]\n"
-        "- material_desc_lines: 아래 규칙을 반드시 지킨다.\n"
-        "  * 3문장. 각 문장은 완결된 형태로 마침표로 끝난다.\n"
-        "  * 소재의 혼용 구성 또는 소재명 → 표면 질감·광택·두께감 → 착용 시 편안함·관리 편의성 순으로 자연스럽게 서술한다.\n"
-        "  * 입력된 소재명과 소재설명 참고메모를 바탕으로 재작성한다. 입력 문구를 그대로 쓰지 않는다.\n"
-        "  * 문법 오류 절대 금지. '~가 돋보이는.' 처럼 서술어 없이 끝나는 문장 금지.\n"
-        "  * 올바른 예시:\n"
-        "    '울, 텐셀, 레이온, 나일론이 조화롭게 혼방되어 부드러운 촉감이 느껴집니다.'\n"
-        "    '은은한 광택이 더해져 세련된 무드를 연출하며, 구김이 적어 관리가 편리합니다.'\n"
-        "    '가볍고 부담 없는 두께로 여리한 실루엣이 자연스럽게 표현됩니다.'\n"
-        "  * 금지 예시: '깨끗한 아이보리 컬러가 돋보이는.' (서술어 없음, 컬러 설명은 소재설명에 불필요)\n\n"
-        "- recommend_lines: 반드시 위 추천 블록 규칙 준수. 4줄.\n"
-        "- review_lines: 실제 미샵 스텝·모델·MD가 착용 후 말할 법한 솔직하고 구체적인 후기 4줄. 따옴표 없이 문장만.\n"
-        "- faqs: 아래 규칙을 반드시 지킨다.\n"
-        "  * q는 Q.로 시작, a는 A.로 시작.\n"
-        "  * 미샵 4050 여성 고객이 이 상품을 구매 전 실제로 망설이며 물어볼 만한 질문이어야 한다.\n"
-        "  * 상품의 소재·핏·사이즈·컬러·디테일·관리법·착용 상황 등 구체적 정보에 기반한 질문과 답변을 작성한다.\n"
-        "  * 아래처럼 해당 상품 특성이 반영된 질문을 만든다:\n"
-        "    - 체형 관련: '가슴이 있는 77 체형인데 답답하지 않게 입을 수 있을까요?'\n"
-        "    - 소재 관련: '큐브라 폴리 소재인데 여름에도 입을 수 있나요?', '비침이 있나요?'\n"
-        "    - 컬러 관련: '아이보리라 비침이 심하진 않나요?', '세탁 후 변색되지 않나요?'\n"
-        "    - 활용 관련: '오피스룩으로 입기에 너무 캐주얼하지 않나요?'\n"
-        "    - 관리 관련: '드라이클리닝만 가능한가요? 손세탁은 안 되나요?'\n"
-        "  * 답변은 단답형이 아니라 고객의 걱정을 실제로 해소해주는 충실한 내용으로 작성한다.\n"
-        "  * 일반적인 질문 금지 예시: 'Q. 사이즈는 어떻게 선택하나요?' (너무 범용적)\n\n"
-        "- shopping_lines: 실용 정보 3줄 (사이즈, 컬러별 주의, 관리방법 등).\n"
-        "- md_sections.choice: 이 상품을 선택해야 하는 이유. 한 줄 15~25자, 최대 6줄. 의미가 이어지면 다음 줄로 나눈다.\n"
-        "- md_sections.fabric: 소재·두께감·착용감. 한 줄 15~25자, 최대 6줄. 의미가 이어지면 다음 줄로 나눈다.\n"
-        "- md_sections.fit: 체형·사이즈·실루엣. 한 줄 15~25자, 최대 6줄. 의미가 이어지면 다음 줄로 나눈다.\n"
-        "- md_sections.occasion: 착용 장면·코디. 한 줄 15~25자, 최대 6줄. 의미가 이어지면 다음 줄로 나눈다.\n"
-        "- size_tips: 각 체형별 2문장. 첫 문장은 착용감·핏 특징, 둘째 문장은 실루엣·커버 효과.\n"
-        "  예시) 55: ['여유 있는 핏으로 루즈하게 연출됩니다.', '소매와 어깨가 자연스럽게 떨어져 여리여리한 실루엣이 살아납니다.']\n"
-        "  예시) 77: ['상체가 크거나 군살이 있으신 분도 드라마틱한 체형 커버 효과를 느끼실 수 있습니다.', '적당히 여유 있는 핏으로 깔끔하게 연출됩니다.']\n"
-    )
-    return prompt
+[이번 상품에 대해 확인된 입력값]
+{raw}
+
+[상품 고유 정보를 빠뜨리지 않기 위한 체크리스트]
+{fact_report(data, additional_request)}
+
+[작성 순서]
+1. 입력에서 증명되는 상품 특징/소재/장점/주의사항을 머릿속에 정리하세요.
+2. 겉보기에 그럴듯한 일반론 대신 '어떤 디테일이 고객의 어떤 불편을 해소하는지' 근거를 연결하세요.
+3. 입력된 디테일, 핏, 주요 어필 포인트를 MD원고에 골고루 배치하세요. 특정 내용만 반복하거나 누락하지 마세요.
+4. 고객이 실제로 궁금해할 사이즈·소재·관리·코디 질문을 구체적으로 다루세요.
+5. 불확실한 내용을 지어내지 마세요. 사진에 없거나 입력되지 않은 소재 비율, 제조 방식, 안감, 비침 없음, 건조기 가능, 제작사, 실제 착용 후기 등을 단정하면 안 됩니다.
+6. 실측 숫자와 혼용률이 입력됐다면 정확히 유지하세요. 입력에 없는 실측 수치를 쓰지 마세요.
+7. 다른 상품에서 가져온 내용, 템플릿용 고정 상품 문구, 근거 없는 장점은 절대 넣지 마세요.
+8. 입력 문장을 그대로 복사하지 말고, 그 의미를 유지하며 자연스럽게 재구성하세요.
+
+[문장 품질]
+- MD원고는 4개 소제목, 각 영역에 해당하는 풍부하고 구체적인 문단 3~5개로 작성합니다. 영역별 본문은 공백 포함 115~220자 정도를 목표로 합니다.
+- 이 단계에서 한 줄 20~24자에 억지로 맞추지 마세요. 출력 함수가 자연스럽게 줄바꿈합니다. 의미와 문장 흐름이 우선입니다.
+- 각 영역의 문장은 전개가 자연스럽고 반복 없이 구체적이어야 합니다. '다양한 활용이 가능합니다' 같은 빈 문구로 채우지 마세요.
+- choice: 다른 상품과의 차이·선택 이유. fabric: 실제 혼용 소재/촉감/두께 (입력 근거 있을 때만). fit: 체형, 사이즈, 실측. occasion: 구체적인 코디와 착용 장면.
+- 추천문장 4개는 모두 자연스러운 '~분'으로 끝납니다. '분께', '추천합니다', '권해드립니다', '입니다 분' 금지. 각기 다른 구매 니즈를 제시하세요.
+- review_lines 4개는 입을 때 확인할 포인트를 자연스러운 친근한 톤으로 작성하세요. 실제 직원/모델이 직접 착용했다는 근거가 없으면 가짜 경험담이나 인용을 꾸며내지 마세요.
+- FAQ 4개는 입력 상품에 맞는 현실적인 구매 장애 요인과 근거 있는 답변으로 작성하세요. 모르면 모른다고 하거나 실측 확인을 안내하세요.
+- 소재설명 3문장은 소재·조직·특성을 가급적 구체적으로 설명하되 확인되지 않은 기능은 주장하지 마세요.
+- 사이즈팁: {profiles}. 각 사이즈별로 이 수치가 가리키는 체형 차이와 상품의 실제 핏 정보를 고려한 2문장. 특정 체형에 무조건 잘 맞는다거나 극적인 커버 효과를 확정하지 마세요. 입력 실측이 부족하면 개인차/실측 확인을 안내하세요.
+- '쇼핑에 꼭 참고하세요', '[구매 전 꼭 확인해 주세요]', 마무리 인사 등은 작성·출력하지 않습니다.
+
+[JSON 형식 — 코드펜스/설명 없이 객체 하나만]
+{{
+ "material_desc_lines": ["충분히 구체적인 완결 문장 1", "완결 문장 2", "완결 문장 3"],
+ "recommend_lines": ["고유 장점을 찾으시는 분", "특징을 원하는 분", "착용감을 중요하게 생각하시는 분", "실용성을 찾으시는 분"],
+ "review_lines": ["근거 있는 관찰 포인트 1", "2", "3", "4"],
+ "faqs": [{{"q":"Q. 실제 구매 질문 1", "a":"A. 입력을 근거로 한 답변 1"}}, {{"q":"Q. 실제 구매 질문 2", "a":"A. 답변 2"}}, {{"q":"Q. 실제 구매 질문 3", "a":"A. 답변 3"}}, {{"q":"Q. 실제 구매 질문 4", "a":"A. 답변 4"}}],
+ "md_sections": {{"choice":["정보가 풍부한 문단 1", "문단 2", "문단 3"], "fabric":["문단 1", "문단 2", "문단 3"], "fit":["문단 1", "문단 2", "문단 3"], "occasion":["문단 1", "문단 2", "문단 3"]}},
+ "size_tips": {{"55":["문장 1", "문장 2"], "66":["문장 1", "문장 2"], "66half":["문장 1", "문장 2"], "77":["문장 1", "문장 2"]}}
+}}
+"""
 
 
 # ─────────────────────────────────────────────
 # LLM 생성
 # ─────────────────────────────────────────────
 def generate_structured_copy(data, additional_request, uploaded_images):
+    """초안 생성 후 상품정보 충실도 재검토. 부실 원고를 범용 문장으로 메우지 않음."""
     prompt = build_generation_prompt(data, additional_request)
     user_content = [{"type": "text", "text": prompt}]
     for img in (uploaded_images[:5] if uploaded_images else []):
         user_content.append(file_to_content_item(img))
 
-    response = chat_with_retry(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "사용자의 추가/수정 요청사항을 최우선으로 반영한다."},
-            {
-                "role": "system",
-                "content": (
-                    "반드시 JSON만 출력한다. 없는 디테일은 추정하지 않는다. "
-                    "recommend_lines는 반드시 '~분' 또는 '~분.'으로 끝나는 형태로만 생성한다. "
-                    "추천합니다, 권해드립니다, 적합합니다, 분께 같은 표현은 절대 사용하지 않는다. "
-                    "md_sections의 각 배열 줄은 절대 쉼표(,)로 끝내지 않는다. "
-                    "'블라우스로,' '뛰어나며,' '소재로,' 처럼 쉼표로 끝나는 줄은 완전히 금지한다. "
-                    "줄이 다음 줄과 문맥상 이어지더라도 쉼표 없이 자연스럽게 끊거나 완결 문장으로 쓴다."
-                ),
-            },
-            {"role": "user", "content": user_content},
-        ],
-        temperature=0.55,
-        max_retries=2,
+    messages = [
+        {"role": "system", "content": "확인된 상품 정보만으로 한국어 커머스 카피를 작성하세요. JSON 객체만 반환하세요. 근거 없는 정보는 절대 추측하지 않습니다."},
+        {"role": "user", "content": user_content},
+    ]
+    first = chat_with_retry(model="gpt-4o", messages=messages, temperature=0.45, max_retries=2)
+    raw = extract_json(first.choices[0].message.content)
+    issues = check_quality(raw, data, additional_request)
+
+    # 수정 포인트가 없더라도 한 번 MD 편집 검수를 수행해 형식만 맞춘 싱거운 원고를 걸러낸다.
+    editor_instructions = (
+        "다음 상품에 대한 초안을 실무자가 바로 사용할 수준으로 꼼꼼히 편집하세요. "
+        "반드시 원래 JSON의 동일한 키/개수를 유지하세요. "
+        "구체적 디테일·소재·핏·어필 포인트가 누락된 곳을 보강하고, 반복되는 범용 표현과 과장·허위 경험담을 제거하세요. "
+        "특히 md_sections 4개 영역 각각 3~5개 문단, 내용 총 115자 이상이 되게 작성하세요. "
+        "리스트 문장과 사이즈팁의 정확성도 확인하세요. "
+        "모르는 사실은 만들지 말고 입력값만 사용하세요. JSON 객체만 답하세요."
     )
-    return extract_json(response.choices[0].message.content)
+    if issues:
+        editor_instructions += "\n[실제 검사에서 발견된 문제]\n" + "\n".join("- " + x for x in issues)
+    audit = [
+        {"role": "system", "content": editor_instructions},
+        {"role": "user", "content": "[이 상품 입력 정보]\n" + prompt + "\n[검토·개선할 초안 JSON]\n" + json.dumps(raw, ensure_ascii=False)},
+    ]
+    try:
+        revised_result = chat_with_retry(model="gpt-4o", messages=audit, temperature=0.25, max_retries=1)
+        revised = extract_json(revised_result.choices[0].message.content)
+        revised_issues = check_quality(revised, data, additional_request)
+        if not revised_issues:
+            return revised
+        # 검수 모델이 더 나쁜 답을 냈다면 원본이 유효할 때는 원본을 사용한다.
+        if not issues:
+            return raw
+        raise ValueError("작성 품질 검증 미통과: " + " / ".join(revised_issues[:5]))
+    except RateLimitError:
+        if not issues:
+            return raw
+        raise
+    except (ValueError, json.JSONDecodeError) as exc:
+        if not issues:
+            return raw
+        raise ValueError("원고 재검토에도 미흡한 항목이 남아 있습니다. " + str(exc)) from exc
 
 
 # ─────────────────────────────────────────────
@@ -688,8 +629,8 @@ def render_text_source(structured):
 
     faq_parts = []
     for idx, faq in enumerate(structured['faqs']):
-        q = faq['q'].replace("Q.", "").strip()
-        a = faq['a'].replace("A.", "").strip()
+        q = re.sub(r"^(?:Q\.\s*)+", "", faq['q']).strip()
+        a = re.sub(r"^(?:A\.\s*)+", "", faq['a']).strip()
         faq_parts.append(f"Q. {q}<br>\n")
         faq_parts.append(f"A. {a}<br>\n")
         if idx < len(structured['faqs']) - 1:
@@ -729,7 +670,7 @@ def render_subsc_html(data, structured):
     md = structured["md_sections"]
 
     def join_md(lines):
-        return "".join(x + "<br>\n" for x in lines)
+        return "".join(part + "<br>\n" for x in lines for part in natural_wrap(x, max_chars=24))
 
     return (
         '<div id="subsc">\n'
@@ -752,7 +693,7 @@ def render_subsc_html(data, structured):
 
 def build_subtap_html(data, material_desc_lines):
     material_line = format_material_line(data["material"])
-    washing = (data["washing"] or "").strip() or "드라이클리닝, 단독 울세탁, 손세탁 권장. 건조기 사용 금지"
+    washing = (data["washing"] or "").strip() or "상품 케어라벨의 세탁 안내를 확인해 주세요."
     size_tip = (data["size"] or "").strip() or "FREE 사이즈로 77까지 추천드립니다."
     measurement_html = format_measurement_lines(data["measurement_lines"])
     desc_html = "<br>\n\t\t\t\t\t\t\t\t\t".join(material_desc_lines) + "<br>"
@@ -789,10 +730,8 @@ def build_subtap_html(data, material_desc_lines):
         "\t\t\t\t\t\t\t\t<h3>사이즈 TIP</h3>\n"
         "\t\t\t\t\t\t\t\t<p>" + size_tip + "</p>\n"
         "\t\t\t\t\t\t\t\t<h3>길이 TIP</h3>\n"
-        "\t\t\t\t\t\t\t\t<p>162-167cm에서는 모델핏을 참고해 주시고,\n"
-        "<br> 다리 길이나 체형에 따라 다르지만,\n"
-        "<br> 160cm이하에서는 모델의 핏보다 조금 길게\n"
-        "<br> 연출됩니다.</p>\n"
+        "\t\t\t\t\t\t\t\t<p>실제 기장감은 키와 체형에 따라 달라집니다.\n"
+        "<br> 입력된 상품의 총장 및 실측사이즈를 참고해 주세요.</p>\n"
         "\t\t\t\t\t\t\t</a>\n"
         "\t\t\t\t\t\t</li>\n"
         "\t\t\t\t\t</ul>\n"
@@ -1017,7 +956,7 @@ if st.button("생성하기", type="primary", use_container_width=True, key=f"gen
     with st.spinner("출력물을 생성 중입니다..."):
         try:
             structured_raw = generate_structured_copy(data, additional_request, uploaded_images)
-            structured = normalize_generated(structured_raw, data)
+            structured = normalize_generated_strict(structured_raw)
             result = assemble_final_output(data, structured)
         except RateLimitError:
             st.error("현재 OpenAI 요청이 일시적으로 몰려 원고 생성을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.")
